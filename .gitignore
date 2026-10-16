@@ -1,0 +1,7 @@
+/waf
+/dist/
+/data/
+waf.yaml
+*.db
+*.db-*
+master.key

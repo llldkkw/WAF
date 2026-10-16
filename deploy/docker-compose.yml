@@ -1,0 +1,19 @@
+# 用 Docker 运行（推荐直接用 systemd 运行二进制，见 README）。
+# 使用 host 网络以便看到真实客户端 IP，并直接监听 80/443。
+services:
+  waf:
+    build: ..
+    image: waf:latest
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      WAF_CONFIG: /etc/waf/waf.yaml
+    volumes:
+      - ./waf.yaml:/etc/waf/waf.yaml:ro
+      - waf-data:/var/lib/waf
+volumes:
+  waf-data:

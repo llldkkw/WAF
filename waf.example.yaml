@@ -1,0 +1,43 @@
+# WAF 网关配置文件。运行时可变的配置（站点、IP 规则、通知等）都在管理面板里改，
+# 这里只放启动参数。修改本文件后需要重启服务：systemctl restart waf
+
+# 数据目录：数据库、加密主密钥、证书。务必备份 master.key！
+data_dir: /var/lib/waf
+
+proxy:
+  # 对公网提供服务的端口
+  http_listen: ":80"
+  https_listen: ":443"
+  # 网关前面如果还有 CDN（如 Cloudflare），把 CDN 的网段写在这里，
+  # 才会信任 X-Forwarded-For 拿到真实客户端 IP。没有就留空。
+  trusted_proxies: []
+  # WAF 引擎出错时：false = 拒绝请求（更安全），true = 放行（更可用）
+  fail_open: false
+  # 请求体最多检查多少字节
+  max_body_bytes: 10485760
+
+admin:
+  # 管理面板只监听 WireGuard 内网地址，公网完全不可见
+  listen: "10.8.0.1:9443"
+  # self-signed（自动生成自签名证书）/ file（自己的证书）/ off（不推荐）
+  tls: self-signed
+  # cert_file: /etc/waf/admin.crt
+  # key_file: /etc/waf/admin.key
+  # 只有这些来源地址能打开面板（双保险）
+  allowed_cidrs:
+    - 10.8.0.0/24
+    - 127.0.0.1/32
+  session_hours: 12   # 会话最长有效期
+  idle_minutes: 30    # 无操作自动登出
+
+# 自动 HTTPS（Let's Encrypt）。开启前确保域名已解析到本机且 80 端口可从公网访问。
+acme:
+  enabled: false
+  email: you@example.com
+
+# 可选：MaxMind GeoLite2-Country.mmdb，用于攻击地图和地区封禁
+# 免费注册下载：https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
+# geoip_db: /var/lib/waf/GeoLite2-Country.mmdb
+
+# 攻击日志保留天数
+log_retention_days: 30

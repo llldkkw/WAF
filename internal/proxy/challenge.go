@@ -162,7 +162,7 @@ func wantsHTML(r *http.Request) bool {
 
 // serveChallenge answers with the challenge page, or a plain 403 for
 // requests that cannot run JavaScript (API calls, assets).
-func (p *Proxy) serveChallenge(w http.ResponseWriter, r *http.Request, s *store.Site, a netip.Addr) {
+func (p *Proxy) serveChallenge(w http.ResponseWriter, r *http.Request, s *store.Site, a netip.Addr, ret string) {
 	h := w.Header()
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")
@@ -173,29 +173,62 @@ func (p *Proxy) serveChallenge(w http.ResponseWriter, r *http.Request, s *store.
 		return
 	}
 	nonce := secure.Token(12)
+	caps := p.tbl.Load().captcha
+	provider := effectiveProvider(s, caps)
 	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'")
+	if provider == "pow" {
+		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'")
+	} else {
+		h.Set("Content-Security-Policy", captchaCSP(provider, nonce, caps.Recaptcha.Domain))
+	}
 	w.WriteHeader(http.StatusForbidden)
 	if r.Method == http.MethodHead {
 		return
 	}
-	_ = challengeTmpl.Execute(w, map[string]any{
+	data := map[string]any{
 		"Nonce": nonce, "Token": p.newToken(s, a), "Diff": s.Challenge.Difficulty,
-		"Return": r.URL.RequestURI(), "Action": challengePath,
-	})
+		"Return": ret, "Action": challengePath, "Provider": provider,
+	}
+	switch provider {
+	case "turnstile":
+		data["SiteKey"] = caps.Turnstile.SiteKey
+		data["Version"] = ""
+		_ = captchaTmpl.Execute(w, data)
+	case "recaptcha":
+		data["SiteKey"], data["Version"], data["Domain"], data["ActionName"] = caps.Recaptcha.SiteKey, caps.Recaptcha.Version, caps.Recaptcha.Domain, recaptchaAction
+		_ = captchaTmpl.Execute(w, data)
+	default:
+		_ = challengeTmpl.Execute(w, data)
+	}
 }
 
 // handleChallengeSubmit verifies a solution and issues the clearance cookie.
 func (p *Proxy) handleChallengeSubmit(w http.ResponseWriter, r *http.Request, s *store.Site, a netip.Addr) {
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	if r.Method != http.MethodPost || r.ParseForm() != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	tok, counter, ret := r.PostForm.Get("token"), r.PostForm.Get("counter"), r.PostForm.Get("return")
+	tok, ret := r.PostForm.Get("token"), r.PostForm.Get("return")
+	// Only redirect within this site.
+	if !strings.HasPrefix(ret, "/") || strings.HasPrefix(ret, "//") || strings.HasPrefix(ret, "/\\") || strings.HasPrefix(ret, challengePath) {
+		ret = "/"
+	}
 	t, ok := p.parseToken(tok)
-	if !ok || t.Site != s.ID || t.Net != clientNet(a) || !powOK(tok, counter, t.Diff) {
-		p.serveChallenge(w, r, s, a)
+	if ok && (t.Site != s.ID || t.Net != clientNet(a)) {
+		ok = false
+	}
+	if ok {
+		caps := p.tbl.Load().captcha
+		switch provider := effectiveProvider(s, caps); provider {
+		case "pow":
+			ok = powOK(tok, r.PostForm.Get("counter"), t.Diff)
+		default:
+			ok = verifyCaptcha(r.Context(), provider, caps, r.PostForm.Get("captcha"), a.String(), hostOnly(r.Host))
+		}
+	}
+	if !ok {
+		p.serveChallenge(w, r, s, a, ret)
 		return
 	}
 	exp := time.Now().Add(time.Duration(s.Challenge.TTLHours) * time.Hour)
@@ -203,10 +236,6 @@ func (p *Proxy) handleChallengeSubmit(w http.ResponseWriter, r *http.Request, s 
 		Name: clearanceCookie, Value: p.clearanceValue(s, a, r, exp.Unix()), Path: "/",
 		Expires: exp, HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteLaxMode,
 	})
-	// Only redirect within this site.
-	if !strings.HasPrefix(ret, "/") || strings.HasPrefix(ret, "//") || strings.HasPrefix(ret, "/\\") {
-		ret = "/"
-	}
 	http.Redirect(w, r, ret, http.StatusSeeOther)
 }
 

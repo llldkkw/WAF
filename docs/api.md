@@ -86,6 +86,13 @@ curl -sk -b jar $A/api/overview?range=24h
 | PUT | `/api/settings/reports` | 🔒 | `{daily, daily_time, weekly, weekly_day, weekly_time}` |
 | POST | `/api/reports/send` | 🔒 | `{period: "daily"\|"weekly"}` 立即发送并返回预览 |
 
+### 系统设置
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/settings/captcha` | 🔒 | 人机验证服务配置（私钥显示为 `••••••`） |
+| PUT | `/api/settings/captcha` | 🔒 | `{turnstile: {site_key, secret}, recaptcha: {site_key, secret, version, min_score, domain}}` |
+
 ### 一键操作
 
 | 方法 | 路径 | 权限 | 说明 |

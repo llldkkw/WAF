@@ -190,3 +190,54 @@ func (s *Server) handleSendReport(w http.ResponseWriter, r *http.Request) {
 	s.nt.Notify(*m)
 	writeJSON(w, map[string]any{"ok": true, "preview": m.Body})
 }
+
+// --- third-party human verification keys ---
+
+func maskSecret(s string) string {
+	if s == "" {
+		return ""
+	}
+	return secretMask
+}
+
+func (s *Server) handleGetCaptcha(w http.ResponseWriter, r *http.Request) {
+	c, err := s.st.CaptchaProviders(r.Context(), s.box)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	c.Turnstile.Secret = maskSecret(c.Turnstile.Secret)
+	c.Recaptcha.Secret = maskSecret(c.Recaptcha.Secret)
+	writeJSON(w, map[string]any{"captcha": c})
+}
+
+func (s *Server) handleSaveCaptcha(w http.ResponseWriter, r *http.Request) {
+	var c store.CaptchaProviders
+	if !decode(w, r, &c) {
+		return
+	}
+	old, err := s.st.CaptchaProviders(r.Context(), s.box)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	// A masked secret means "unchanged".
+	if c.Turnstile.Secret == secretMask {
+		c.Turnstile.Secret = old.Turnstile.Secret
+	}
+	if c.Recaptcha.Secret == secretMask {
+		c.Recaptcha.Secret = old.Recaptcha.Secret
+	}
+	if err := c.Normalize(); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.st.SaveCaptchaProviders(r.Context(), s.box, &c); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.changed(r, "captcha_settings", "人机验证服务", map[string]any{
+		"turnstile": c.Turnstile.Ready(), "recaptcha": c.Recaptcha.Ready(), "recaptcha_version": c.Recaptcha.Version,
+	})
+	writeJSON(w, map[string]bool{"ok": true})
+}

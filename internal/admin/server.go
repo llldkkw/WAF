@@ -125,6 +125,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/settings/reports", admin(s.handleSaveReportSettings))
 	mux.HandleFunc("POST /api/reports/send", admin(s.handleSendReport))
 
+	mux.HandleFunc("GET /api/settings/captcha", admin(s.handleGetCaptcha))
+	mux.HandleFunc("PUT /api/settings/captcha", admin(s.handleSaveCaptcha))
+
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, errors.New("not found"))
 	})

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ArrowRight, Globe2, Lock, Pencil, Plus, Trash2 } from "lucide-react";
-import { api, type Challenge, type GeoPolicy, type Mode, type PathRule, type Site, type Status } from "../lib/api";
+import { api, type CaptchaProviders, type Challenge, type GeoPolicy, type Mode, type PathRule, type Site, type Status } from "../lib/api";
 import { cnProvinces, geoRuleLabel, needsCityDB } from "../lib/regions";
 import { useAuth } from "../lib/auth";
 import { useLoad } from "../lib/hooks";
@@ -40,7 +40,7 @@ const blank = (): Site => ({
   rate_limit: { enabled: true, rps: 20, burst: 40, ban_threshold: 60, ban_minutes: 30 },
   attack_ban: { enabled: true, threshold: 20, minutes: 60 },
   geo: { mode: "off", rules: [], allow_unknown: false },
-  challenge: { mode: "off", ttl_hours: 24, difficulty: 16, exempt_paths: [] },
+  challenge: { mode: "off", ttl_hours: 24, difficulty: 16, exempt_paths: [], provider: "pow" },
   rule_exclusions: [],
   path_rules: [],
   health_check: { enabled: true, path: "/", interval_sec: 10 },
@@ -297,7 +297,7 @@ function SiteEditor({ site, readOnly, onClose, onSaved }: { site: Site; readOnly
           )}
         </Section>
 
-        <Section title="人机验证（JS 挑战）" desc="访问者的浏览器需要先完成一次计算（通常不到 1 秒）才能进入，可挡住绝大多数爬虫、扫描器和脚本化 CC 攻击。注意：搜索引擎爬虫和 API 客户端也会被拦下，API 路径请加入免验证。">
+        <Section title="人机验证" desc="访客通过验证后才能进入，可挡住绝大多数爬虫、扫描器和脚本化 CC 攻击。可使用内置验证（浏览器自动计算，访客无感知），或 Cloudflare Turnstile、Google reCAPTCHA。注意：搜索引擎爬虫和 API 客户端也会被拦下，API 路径请加入免验证。">
           <Field label="验证模式">
             <Segmented<Challenge["mode"]>
               value={s.challenge.mode}
@@ -314,8 +314,9 @@ function SiteEditor({ site, readOnly, onClose, onSaved }: { site: Site; readOnly
           </p>
           {s.challenge.mode !== "off" && (
             <>
+              <ProviderPicker value={s.challenge.provider} onChange={(provider) => up({ challenge: { ...s.challenge, provider } })} />
               <div className="grid grid-cols-2 gap-3">
-                <Field label="难度">
+                <Field label={s.challenge.provider === "pow" ? "难度" : "难度（内置验证备用）"}>
                   <Select value={s.challenge.difficulty} onChange={(e) => up({ challenge: { ...s.challenge, difficulty: Number(e.target.value) } })}>
                     <option value={14}>低（手机约 0.1 秒）</option>
                     <option value={16}>标准（推荐）</option>
@@ -425,6 +426,45 @@ function GeoEditor({ value: g, onChange }: { value: GeoPolicy; onChange: (g: Geo
           </>
         )}
       </div>
+    </Field>
+  );
+}
+
+function ProviderPicker({ value, onChange }: { value: Challenge["provider"]; onChange: (v: Challenge["provider"]) => void }) {
+  const { isAdmin } = useAuth();
+  const [caps, setCaps] = useState<CaptchaProviders | null>(null);
+  useEffect(() => {
+    if (isAdmin) api.captcha().then((r) => setCaps(r.captcha)).catch(() => {});
+  }, [isAdmin]);
+  const ready = {
+    pow: true,
+    turnstile: !!caps?.turnstile.site_key && !!caps?.turnstile.secret,
+    recaptcha: !!caps?.recaptcha.site_key && !!caps?.recaptcha.secret,
+  };
+  return (
+    <Field
+      label="验证方式"
+      hint={
+        value !== "pow" && caps && !ready[value] ? (
+          <span className="text-warn">尚未在「系统设置」中配置该服务的密钥，将自动使用内置验证。</span>
+        ) : value === "pow" ? (
+          "无需第三方服务，访客无感知（自动计算），隐私友好，国内访问无障碍。"
+        ) : value === "turnstile" ? (
+          "Cloudflare Turnstile：多数情况下无需点击，免费。"
+        ) : (
+          "Google reCAPTCHA：默认通过 recaptcha.net 加载，国内可用。"
+        )
+      }
+    >
+      <Segmented<Challenge["provider"]>
+        value={value}
+        onChange={onChange}
+        options={[
+          { value: "pow", label: "内置验证" },
+          { value: "turnstile", label: "Cloudflare Turnstile" },
+          { value: "recaptcha", label: "Google reCAPTCHA" },
+        ]}
+      />
     </Field>
   );
 }

@@ -26,6 +26,7 @@ const labels: Record<string, [string, Tone]> = {
   cert_delete: ["删除证书", "danger"],
   action_link: ["一键操作", "warn"],
   report_settings: ["报告设置", "accent"],
+  captcha_settings: ["人机验证服务", "warn"],
   user_create: ["新建用户", "accent"],
   user_update: ["修改用户", "warn"],
   user_delete: ["删除用户", "danger"],

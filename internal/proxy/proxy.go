@@ -48,6 +48,7 @@ type table struct {
 	httpsSet map[string]bool
 	wildTLS  map[string]bool
 	certs    *certIndex
+	captcha  *store.CaptchaProviders
 }
 
 func (t *table) lookup(host string) *siteRuntime {
@@ -119,11 +120,15 @@ func (p *Proxy) Reload(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	caps, err := p.st.CaptchaProviders(ctx, p.box)
+	if err != nil {
+		return err
+	}
 	t := &table{
 		exact: map[string]*siteRuntime{}, wildcard: map[string]*siteRuntime{},
 		ips: buildIPList(rules), version: ver,
 		httpsSet: map[string]bool{}, wildTLS: map[string]bool{},
-		certs: p.buildCerts(certs),
+		certs: p.buildCerts(certs), captcha: caps,
 	}
 	var targets []hcTarget
 	var active []store.Site
@@ -394,7 +399,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 5. Human verification (JS challenge).
 	if p.needsChallenge(s, addr, r) {
 		p.rec.Count(s.ID, false)
-		p.serveChallenge(w, r, s, addr)
+		p.serveChallenge(w, r, s, addr, r.URL.RequestURI())
 		return
 	}
 

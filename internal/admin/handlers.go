@@ -44,7 +44,7 @@ func actionLabel(a string) string {
 		"ip_add": "添加 IP 规则", "ip_delete": "删除 IP 规则",
 		"channel_save": "保存通知渠道", "channel_delete": "删除通知渠道",
 		"cert_upload": "上传证书", "cert_replace": "更新证书", "cert_delete": "删除证书",
-		"action_link": "执行一键操作", "report_settings": "修改报告设置",
+		"action_link": "执行一键操作", "report_settings": "修改报告设置", "captcha_settings": "修改人机验证服务",
 		"user_create": "新建用户", "user_update": "修改用户", "user_delete": "删除用户", "user_reset": "重置用户凭据",
 	}[a]; ok {
 		return l

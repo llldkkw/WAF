@@ -32,6 +32,14 @@ sudo -u waf WAF_CONFIG=/etc/waf/waf.yaml waf user reset -name admin
 
 内网和 VPN 地址始终放行，连上 WireGuard 后访问不受地区限制。也可以把自己的 IP 加入白名单。
 
+### 人机验证用内置、Turnstile 还是 reCAPTCHA？
+
+- **内置**：不依赖任何第三方，访客无需操作，隐私最好，国内外都能访问。挡住脚本和普通爬虫足够。
+- **Cloudflare Turnstile**：免费，大多数访客无需点击；判断是否机器人更准确（Cloudflare 的风险数据）。中国大陆访问速度视网络而定。
+- **Google reCAPTCHA**：v2 需要勾选复选框，v3 无感评分；默认经 recaptcha.net 加载，国内可用。
+
+建议平时用「仅可疑访问 + 内置」，遭受攻击时切换到「所有访问」，需要更强识别时用 Turnstile。
+
 ### 人机验证会影响搜索引擎收录吗？
 
 会。搜索引擎爬虫不执行 JavaScript，开启「所有访问」后无法收录。需要 SEO 的网站请用「仅可疑访问」，或只在遭受 CC 攻击时临时开启「所有访问」。API、Webhook 等非浏览器路径请加入「免验证路径」。

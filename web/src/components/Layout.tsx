@@ -10,6 +10,7 @@ import {
   Menu,
   Moon,
   ScrollText,
+  Settings2,
   ShieldCheck,
   ShieldBan,
   Sun,
@@ -31,6 +32,7 @@ const nav: { to: string; label: string; icon: ReactNode; admin?: boolean }[] = [
   { to: "/notifications", label: "推送通知", icon: <Bell />, admin: true },
   { to: "/users", label: "用户管理", icon: <Users />, admin: true },
   { to: "/audit", label: "操作审计", icon: <FileClock />, admin: true },
+  { to: "/settings", label: "系统设置", icon: <Settings2 />, admin: true },
   { to: "/account", label: "账号安全", icon: <UserCog /> },
 ];
 

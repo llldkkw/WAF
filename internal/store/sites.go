@@ -88,6 +88,9 @@ type Challenge struct {
 	// Difficulty in leading zero bits of the proof of work (12-22).
 	Difficulty  int      `json:"difficulty"`
 	ExemptPaths []string `json:"exempt_paths"`
+	// Provider: pow (built-in proof of work), turnstile (Cloudflare) or
+	// recaptcha (Google). Third-party keys are configured globally.
+	Provider string `json:"provider"`
 }
 
 // AttackBan bans IPs that trigger many WAF blocks in a short time (scanners).
@@ -355,6 +358,9 @@ func (s *Site) applyDefaults() {
 	if s.Challenge.Mode == "" {
 		s.Challenge = Challenge{Mode: "off", TTLHours: 24, Difficulty: 16}
 	}
+	if s.Challenge.Provider == "" {
+		s.Challenge.Provider = "pow"
+	}
 	if s.Challenge.ExemptPaths == nil {
 		s.Challenge.ExemptPaths = []string{}
 	}
@@ -408,6 +414,13 @@ func (c *Challenge) normalize() error {
 	case "always", "suspicious":
 	default:
 		return fmt.Errorf("人机验证模式无效: %q", c.Mode)
+	}
+	switch c.Provider {
+	case "":
+		c.Provider = "pow"
+	case "pow", "turnstile", "recaptcha":
+	default:
+		return fmt.Errorf("人机验证方式无效: %q", c.Provider)
 	}
 	if c.TTLHours <= 0 {
 		c.TTLHours = 24

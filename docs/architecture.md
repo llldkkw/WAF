@@ -105,6 +105,13 @@ WAF Gateway 是一个 Go 单二进制程序，同时运行两个服务：
 
 ### 人机验证
 
+三种方式共用同一套令牌和 Cookie 机制：
+
+- **内置**：浏览器计算工作量证明（见下）
+- **Cloudflare Turnstile / Google reCAPTCHA**：页面加载对应组件，提交后网关在服务端调用 siteverify 接口校验，并核对返回的域名（reCAPTCHA v3 还核对分数和 action）；第三方不可达时校验失败，不会放行
+
+内置验证的细节：
+
 - 服务器下发签名令牌（站点、客户端网段、5 分钟过期、难度），浏览器计算 `SHA-256(token:counter)` 直到前 N 位为 0
 - 服务端校验签名、过期、网段和工作量后，签发 Cookie：`HMAC(站点 | /24 或 /64 网段 | User-Agent 摘要 | 过期时间)`
 - Cookie 换网段或换浏览器标识即失效；验证页使用带 nonce 的 CSP

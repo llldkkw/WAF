@@ -18,6 +18,7 @@ import Audit from "./pages/Audit";
 import Account from "./pages/Account";
 import Certs from "./pages/Certs";
 import ActionConfirm from "./pages/ActionConfirm";
+import Settings from "./pages/Settings";
 
 function App() {
   const { user, loading, isAdmin } = useAuth();
@@ -36,6 +37,7 @@ function App() {
           <Route path="actions" element={<ActionConfirm />} />
           {isAdmin && <Route path="users" element={<Users />} />}
           {isAdmin && <Route path="audit" element={<Audit />} />}
+          {isAdmin && <Route path="settings" element={<Settings />} />}
           <Route path="account" element={<Account />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

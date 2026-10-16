@@ -57,6 +57,12 @@ export interface Challenge {
   ttl_hours: number;
   difficulty: number;
   exempt_paths: string[];
+  provider: "pow" | "turnstile" | "recaptcha";
+}
+
+export interface CaptchaProviders {
+  turnstile: { site_key: string; secret: string };
+  recaptcha: { site_key: string; secret: string; version: "v2" | "v3"; min_score: number; domain: string };
 }
 
 export interface Cert {
@@ -336,6 +342,9 @@ export const api = {
   reportSettings: () => request<{ settings: ReportSettings; timezone: string }>("GET", "/api/settings/reports"),
   saveReportSettings: (s: ReportSettings) => request("PUT", "/api/settings/reports", { body: s }),
   sendReport: (period: "daily" | "weekly") => request<{ ok: boolean; preview: string }>("POST", "/api/reports/send", { body: { period } }),
+
+  captcha: () => request<{ captcha: CaptchaProviders }>("GET", "/api/settings/captcha"),
+  saveCaptcha: (c: CaptchaProviders) => request("PUT", "/api/settings/captcha", { body: c }),
 
   users: () => request<{ users: User[] }>("GET", "/api/users"),
   createUser: (u: { username: string; password: string; role: Role }) =>

@@ -55,6 +55,13 @@ WAF Gateway 的发行版（二进制文件、Docker 镜像）中包含以下第�
 
 - **MaxMind GeoLite2 数据库**：由用户自行从 MaxMind 下载，受 [GeoLite2 EULA](https://www.maxmind.com/en/geolite2/eula)（CC BY-SA 4.0）约束。使用时请遵守其署名要求："This product includes GeoLite2 data created by MaxMind, available from https://www.maxmind.com"。
 
+## 可选的第三方服务
+
+启用后，访客浏览器会从以下服务加载脚本，网关会调用其校验接口；使用时需遵守各自的服务条款与隐私政策：
+
+- Cloudflare Turnstile — https://www.cloudflare.com/turnstile-privacy-policy/
+- Google reCAPTCHA — https://policies.google.com/privacy 、https://policies.google.com/terms
+
 ## 商标
 
 OWASP、Coraza 为其各自所有者的商标。本项目与 OWASP、MaxMind、Oracle、Slack、Microsoft 等公司或组织无隶属关系。

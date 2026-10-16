@@ -1,6 +1,6 @@
 # WAF Gateway · 自托管 Web 应用防火墙
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-lightgrey.svg)](LICENSE)
 
 部署在自己的跳板机/网关上，作为所有服务器的统一入口：网站流量经 WAF 检查后转发到内网后端，运维流量（SSH、管理面板）只能通过 WireGuard VPN 进入。
 
@@ -258,26 +258,24 @@ make test
 
 Copyright (C) 2026 llldkkw
 
-本程序是自由软件：你可以依据自由软件基金会发布的 **GNU Affero 通用公共许可证（AGPL）第 3 版**或（由你选择）任何更新版本，再分发和/或修改它。完整条款见 [LICENSE](LICENSE)。
-
-本程序的发布是希望它有用，但**不提供任何担保**，甚至不包括适销性或特定用途适用性的默示担保。
-
-简单来说：
+本项目以 **[知识共享 署名-非商业性使用-相同方式共享 4.0 国际许可协议（CC BY-NC-SA 4.0）](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hans)** 授权，完整条款见 [LICENSE](LICENSE)。
 
 | 你可以 | 条件 |
 |---|---|
-| 免费使用，包括商业用途 | — |
-| 修改源码、自行部署 | 只要不把修改版提供给别人用，就无需公开 |
-| 分发（包括修改版） | 必须以 AGPL-3.0 开源，并保留版权和许可声明 |
-| 把修改版作为网络服务提供给他人（如做成 SaaS） | **必须向这些用户提供修改版的完整源码**（AGPL 第 13 条） |
+| 免费使用、学习、研究 | 仅限**非商业用途** |
+| 修改源码 | 修改版必须同样以 CC BY-NC-SA 4.0 发布 |
+| 分享、再分发（包括修改版） | 必须**署名**原作者并附上许可协议链接，注明是否做了修改；不得商用 |
 
-本项目使用的第三方组件及其许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，均与 AGPL-3.0 兼容。
+**禁止商业用途**，包括但不限于：
 
-### 商业授权
+- 出售本项目或其修改版，或以其为主要部分的产品
+- 基于本项目提供收费服务（托管 WAF、SaaS、付费部署或运维服务等）
+- 用于营利性组织的业务系统
 
-本项目采用**双重授权**：
+如需商业使用，请联系作者另行取得书面授权。
 
-- **AGPL-3.0**：个人、开源项目、愿意公开修改源码的组织，免费使用。
-- **商业授权**：如果你的公司无法满足 AGPL 的要求，例如需要闭源修改、集成到闭源产品中，或把修改版作为对外服务提供而不公开源码，可以购买商业授权，免除 AGPL 的开源义务。
+**说明：**
 
-详见 [COMMERCIAL.md](COMMERCIAL.md)。
+- 提交 `b41169f` 至 `cd086eb` 曾以 GNU AGPL-3.0-or-later 发布，已按该许可证获得的这些版本仍适用 AGPL-3.0；此后的版本适用 CC BY-NC-SA 4.0。
+- 本项目使用的第三方组件（Coraza、OWASP CRS、React、ECharts 等）仍按其各自的许可证授权，不受本协议限制，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- 由于包含非商业限制，本项目属于「源码公开」（source-available）项目，不是 OSI 定义的开源软件。

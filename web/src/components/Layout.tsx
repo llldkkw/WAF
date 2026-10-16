@@ -82,7 +82,7 @@ export function Layout() {
         rel="noreferrer"
         className="mx-5 mb-2 text-[11px] text-muted hover:text-accent"
       >
-        开源软件 · AGPL-3.0 · 查看源码
+        CC BY-NC-SA 4.0 · 非商用 · 查看源码
       </a>
       <div className="p-3 border-t border-border">
         <div className="flex items-center gap-2.5 px-2 py-1.5">

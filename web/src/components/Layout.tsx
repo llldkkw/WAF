@@ -76,6 +76,14 @@ export function Layout() {
             </NavLink>
           ))}
       </div>
+      <a
+        href="https://github.com/llldkkw/WAF"
+        target="_blank"
+        rel="noreferrer"
+        className="mx-5 mb-2 text-[11px] text-muted hover:text-accent"
+      >
+        开源软件 · AGPL-3.0 · 查看源码
+      </a>
       <div className="p-3 border-t border-border">
         <div className="flex items-center gap-2.5 px-2 py-1.5">
           <div className="size-8 rounded-full bg-surface-2 border border-border grid place-items-center text-xs font-semibold uppercase">

@@ -2,7 +2,7 @@
 
 WAF Gateway 的发行版（二进制文件、Docker 镜像）中包含以下第三方组件。它们的版权归各自作者所有，并按各自的许可证分发。完整许可证文本见各项目仓库，或 Go 模块缓存 / `web/node_modules` 中对应目录下的 LICENSE 文件。
 
-所有组件均为宽松许可证（Apache-2.0、MIT、BSD、ISC），与本项目的许可证兼容。
+所有组件均为宽松许可证（Apache-2.0、MIT、BSD、ISC），与本项目的许可证 AGPL-3.0-or-later 兼容（Apache-2.0 组件可并入 GPLv3 / AGPLv3 项目）。
 
 ## 核心规则与引擎
 

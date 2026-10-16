@@ -1,5 +1,7 @@
 # WAF Gateway · 自托管 Web 应用防火墙
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+
 部署在自己的跳板机/网关上，作为所有服务器的统一入口：网站流量经 WAF 检查后转发到内网后端，运维流量（SSH、管理面板）只能通过 WireGuard VPN 进入。
 
 ```
@@ -251,3 +253,22 @@ make test
 - [ ] 面板内管理 nftables L4 规则、WireGuard 客户端
 - [ ] 日志接入 ClickHouse，多网关集群
 - [ ] 接入 CrowdSec 社区 IP 信誉库
+
+## 许可证
+
+Copyright (C) 2026 llldkkw
+
+本程序是自由软件：你可以依据自由软件基金会发布的 **GNU Affero 通用公共许可证（AGPL）第 3 版**或（由你选择）任何更新版本，再分发和/或修改它。完整条款见 [LICENSE](LICENSE)。
+
+本程序的发布是希望它有用，但**不提供任何担保**，甚至不包括适销性或特定用途适用性的默示担保。
+
+简单来说：
+
+| 你可以 | 条件 |
+|---|---|
+| 免费使用，包括商业用途 | — |
+| 修改源码、自行部署 | 只要不把修改版提供给别人用，就无需公开 |
+| 分发（包括修改版） | 必须以 AGPL-3.0 开源，并保留版权和许可声明 |
+| 把修改版作为网络服务提供给他人（如做成 SaaS） | **必须向这些用户提供修改版的完整源码**（AGPL 第 13 条） |
+
+本项目使用的第三方组件及其许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，均与 AGPL-3.0 兼容。

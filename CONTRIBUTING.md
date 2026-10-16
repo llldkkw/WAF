@@ -70,4 +70,4 @@ cd web && npm install && npm run dev
 
 ## 许可证
 
-提交贡献即表示你同意你的贡献按本项目的 [LICENSE](LICENSE) 授权。
+本项目采用 [GNU AGPL-3.0-or-later](LICENSE)。提交贡献即表示你同意你的贡献以同样的许可证发布，并确认你有权这样做（例如不包含从不兼容许可证的项目复制的代码）。

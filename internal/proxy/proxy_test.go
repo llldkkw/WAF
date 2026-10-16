@@ -2,11 +2,16 @@ package proxy
 
 import (
 	"context"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +43,11 @@ func setup(t *testing.T, site store.Site, yamlExtra string) (*Proxy, *store.Stor
 		t.Fatal(err)
 	}
 	nt := notify.New(st, box)
-	rec := events.NewRecorder(st, events.NewHub(), nt, nil)
+	geo, err := events.OpenGeo(cfg.GeoIPDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := events.NewRecorder(st, events.NewHub(), nt, geo)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go rec.Run(ctx)
@@ -49,7 +58,7 @@ func setup(t *testing.T, site store.Site, yamlExtra string) (*Proxy, *store.Stor
 	if err := st.SaveSite(ctx, &site); err != nil {
 		t.Fatal(err)
 	}
-	p := New(cfg, st, rec, nt)
+	p := New(cfg, st, rec, nt, box)
 	if err := p.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -162,5 +171,76 @@ func TestTrustedProxy(t *testing.T) {
 	// Trusted peer: rightmost untrusted hop is the client.
 	if w := do(p, "GET", "http://app.test/", "10.0.0.5:1", xff); w.Body.String() != "ok:1.2.3.4" {
 		t.Fatalf("trusted XFF not honoured: %q", w.Body.String())
+	}
+}
+
+func TestChallenge(t *testing.T) {
+	be := backend(t)
+	p, _ := setup(t, store.Site{
+		Name: "app", Enabled: true, Hosts: []string{"app.test"}, Upstreams: []string{be.URL}, Mode: store.ModeOff,
+		Challenge: store.Challenge{Mode: "always", Difficulty: 12, ExemptPaths: []string{"/webhook"}},
+	}, "")
+	const ip = "198.51.100.20:1"
+
+	w := do(p, "GET", "http://app.test/page?x=1", ip, nil)
+	if w.Code != 403 || !strings.Contains(w.Body.String(), "安全验证") {
+		t.Fatalf("expected challenge page, got %d", w.Code)
+	}
+	if w := do(p, "GET", "http://app.test/webhook/x", ip, nil); w.Code != 200 {
+		t.Fatalf("exempt path challenged: %d", w.Code)
+	}
+	if w := do(p, "POST", "http://app.test/api", ip, map[string]string{"Accept": "application/json"}); w.Code != 403 || !strings.Contains(w.Body.String(), "challenge_required") {
+		t.Fatalf("api request: %d %s", w.Code, w.Body.String())
+	}
+
+	tok := regexp.MustCompile(`name="token" value="([^"]+)"`).FindStringSubmatch(w.Body.String())
+	if tok == nil {
+		tok = regexp.MustCompile(`name="token" value="([^"]+)"`).FindStringSubmatch(do(p, "GET", "http://app.test/", ip, nil).Body.String())
+	}
+	token := html.UnescapeString(tok[1])
+	counter := ""
+	for i := 0; ; i++ {
+		if powOK(token, strconv.Itoa(i), 12) {
+			counter = strconv.Itoa(i)
+			break
+		}
+	}
+
+	submit := func(tok, ctr, remote string) *httptest.ResponseRecorder {
+		form := url.Values{"token": {tok}, "counter": {ctr}, "return": {"/page?x=1"}}
+		r := httptest.NewRequest("POST", "http://app.test"+challengePath, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("User-Agent", "Mozilla/5.0")
+		r.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, r)
+		return rec
+	}
+	if w := submit(token, "nope", ip); w.Code == 303 {
+		t.Fatal("wrong proof accepted")
+	}
+	if w := submit(token, counter, "203.0.113.50:1"); w.Code == 303 {
+		t.Fatal("token accepted from another network")
+	}
+	w = submit(token, counter, ip)
+	if w.Code != 303 || w.Header().Get("Location") != "/page?x=1" {
+		t.Fatalf("submit: %d %s", w.Code, w.Header().Get("Location"))
+	}
+	cookie := w.Result().Cookies()[0]
+
+	withCookie := func(ua string) int {
+		r := httptest.NewRequest("GET", "http://app.test/page", nil)
+		r.RemoteAddr = "198.51.100.77:1" // same /24
+		r.Header.Set("User-Agent", ua)
+		r.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if c := withCookie("Mozilla/5.0"); c != 200 {
+		t.Fatalf("cleared request: %d", c)
+	}
+	if c := withCookie("curl/8"); c != 403 {
+		t.Fatalf("cookie reused with another UA: %d", c)
 	}
 }

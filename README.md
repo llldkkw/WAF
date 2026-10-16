@@ -24,8 +24,10 @@
 - CC 防护：单 IP 限流，超限自动封禁
 - 攻击者自动封禁：5 分钟内被拦截 N 次的 IP 自动拉黑（专治扫描器）
 - IP 黑白名单（支持网段、有效期、全局或单站点），白名单优先级最高
-- 地区封禁（GeoIP）、路径访问控制（如 `/admin` 只允许 VPN 网段）
-- 自动 HTTPS（Let's Encrypt），强制跳转
+- **地区策略**：封禁指定地区，或「仅允许」指定地区（国家白名单）；支持国家 `CN`、省份 `CN-GD`、城市 `CN/深圳`
+- **人机验证（JS 挑战）**：浏览器先完成一次工作量证明计算（通常 < 1 秒）才能访问；可对所有访问或仅对可疑访问开启，API 路径可免验证
+- 路径访问控制（如 `/admin` 只允许 VPN 网段）
+- **HTTPS 证书**：上传自己的证书（支持泛域名 `*.example.com`），未上传的域名用 Let's Encrypt 自动签发；到期前 14 天提醒
 - 多后端轮询负载均衡 + 健康检查，自动摘除故障节点
 
 **可视化控制台**
@@ -33,7 +35,7 @@
 - 攻击日志：多条件检索，完整的命中规则详情，一键封禁 / 加白
 - 深色 / 浅色主题，手机可用
 
-**推送通知**（Telegram、企业微信、钉钉、飞书、Bark、邮件、Webhook）
+**推送通知**（Telegram、Slack、Microsoft Teams、企业微信、钉钉、飞书、Bark、邮件、Webhook）
 
 | 等级 | 事件 |
 |---|---|
@@ -42,6 +44,9 @@
 | 🔵 通知 | 配置变更、后端恢复、网关启动 |
 
 同类事件 5 分钟内只推一次，之后汇总；每个渠道可设推送级别和免打扰时段（严重告警不受免打扰影响）。
+
+- **一键操作**：攻击和封禁告警附带「封禁 24 小时 / 永久封禁 / 解除封禁 / 加入白名单」按钮。链接经签名、只能用一次、7 天过期，点开后需登录并确认才执行。
+- **安全报告**：每日 / 每周定时推送（请求量、拦截率、攻击类型、Top 攻击 IP / 地区 / 路径，并与上期对比），也可随时手动发送。
 
 **平台自身安全**
 - 管理面板只监听 VPN 内网地址，并有来源网段白名单双重限制
@@ -150,6 +155,34 @@ GATEWAY_IP=10.0.0.1 APP_PORTS="80,443,8080" sh deploy/backend-firewall.sh
 
 如果后端在云上，同样要在云厂商安全组里只放行网关 IP。
 
+## 通知渠道配置
+
+| 渠道 | 获取方式 |
+|---|---|
+| Slack | Slack App → Incoming Webhooks → Add New Webhook，复制 `https://hooks.slack.com/services/...` |
+| Microsoft Teams | 频道 → 工作流 →「收到 Webhook 请求时发布到频道」，复制生成的 URL（旧版 Office 365 Connector 已被微软停用） |
+| 邮件 | 任意 SMTP，见下方 Oracle Cloud 示例 |
+
+**Oracle Cloud（OCI）Email Delivery 邮件**
+
+1. OCI 控制台 → 开发者服务 → Email Delivery → **Approved Senders**，添加发件地址（如 `alerts@你的域名`），建议同时配置 SPF / DKIM。
+2. 身份 → 用户 → 你的用户 → **SMTP 凭据** → 生成，记下用户名（`ocid1.user...` 开头的长字符串）和密码（只显示一次）。
+3. 在 Email Delivery → Configuration 查看你所在区域的 SMTP 端点，例如 `smtp.email.ap-tokyo-1.oci.oraclecloud.com`。
+4. 控制台 → 推送通知 → 添加渠道 → 邮件：主机填上面的端点，端口 `587`，加密方式 `STARTTLS`，用户名 / 密码填 SMTP 凭据，发件人填已批准的地址。保存后点「测试」。
+
+## 地区策略
+
+需要 GeoIP 数据库（见配置文件 `geoip_db`）。按省份或城市匹配需要 **GeoLite2-City**。
+
+| 规则 | 含义 |
+|---|---|
+| `CN` | 中国（ISO 国家代码） |
+| `CN-GD` | 广东省（ISO 3166-2 省级代码：BJ 北京、SH 上海、GD 广东、ZJ 浙江…） |
+| `CN/深圳` 或 `CN/Shenzhen` | 深圳市 |
+| `CN-GD/深圳` | 广东省深圳市 |
+
+「仅允许」模式下，内网和 VPN 地址始终放行；数据库查不到位置的公网 IP 默认拒绝（可在站点设置中改为放行）。
+
 ## 日常运维
 
 ```bash
@@ -164,7 +197,7 @@ waf user reset -name admin          # 忘记密码或手机丢失：重置密码
 
 **备份**：`/var/lib/waf/` 整个目录，尤其是 `master.key`。丢失它，已保存的通知密钥和两步验证密钥将无法解密。
 
-**地区识别**：从 MaxMind 免费下载 `GeoLite2-Country.mmdb`，放到 `/var/lib/waf/`，在配置里设置 `geoip_db` 后重启。之后攻击地图和地区封禁才会生效。
+**地区识别**：从 MaxMind 免费下载 `GeoLite2-City.mmdb`（只需国家级时可用 Country 版），放到 `/var/lib/waf/`，在配置里设置 `geoip_db` 后重启。之后攻击地图和地区策略才会生效。MaxMind 每周更新数据库，可用官方 `geoipupdate` 工具定期更新。
 
 ## 开发
 
@@ -193,10 +226,13 @@ make test
 
 ## 路线图
 
-- [ ] 告警消息中的一键封禁 / 加白链接（签名的一次性链接）
-- [ ] 每日 / 每周安全报告推送
-- [ ] 手动上传 HTTPS 证书、泛域名证书（DNS-01）
-- [ ] 人机验证（JS 挑战）
+- [x] 告警消息中的一键封禁 / 加白链接
+- [x] 每日 / 每周安全报告推送
+- [x] 手动上传 HTTPS 证书（含泛域名）
+- [x] 人机验证（JS 挑战）
+- [x] 国家白名单、按省份 / 城市拦截
+- [x] Slack、Microsoft Teams 通知；兼容 Oracle Cloud 的邮件发送
+- [ ] 泛域名证书自动签发（DNS-01，需对接 DNS 服务商 API）
 - [ ] 面板内管理 nftables L4 规则、WireGuard 客户端
 - [ ] 日志接入 ClickHouse，多网关集群
 - [ ] 接入 CrowdSec 社区 IP 信誉库

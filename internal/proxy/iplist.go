@@ -60,31 +60,49 @@ func (l *ipList) verdict(siteID int64, a netip.Addr) int {
 
 // banList holds bans made by this process so they apply immediately, before
 // the next config reload picks them up from the database.
-type banList struct {
-	mu   sync.RWMutex
-	bans map[netip.Addr]int64
+type banEntry struct {
+	until, added int64
 }
 
-func newBanList() *banList { return &banList{bans: map[netip.Addr]int64{}} }
+type banList struct {
+	mu   sync.RWMutex
+	bans map[netip.Addr]banEntry
+}
+
+func newBanList() *banList { return &banList{bans: map[netip.Addr]banEntry{}} }
 
 func (b *banList) add(a netip.Addr, until int64) {
 	b.mu.Lock()
-	b.bans[a] = until
+	b.bans[a] = banEntry{until: until, added: time.Now().Unix()}
 	b.mu.Unlock()
 }
 
 func (b *banList) has(a netip.Addr) bool {
 	b.mu.RLock()
-	until, ok := b.bans[a]
+	e, ok := b.bans[a]
 	b.mu.RUnlock()
-	return ok && until > time.Now().Unix()
+	return ok && e.until > time.Now().Unix()
+}
+
+// settle drops bans that have had time to reach the database: from then on
+// the persisted rule is authoritative, so deleting it (panel, link, CLI)
+// lifts the ban.
+func (b *banList) settle() {
+	cut := time.Now().Unix() - 10
+	b.mu.Lock()
+	for a, e := range b.bans {
+		if e.added < cut {
+			delete(b.bans, a)
+		}
+	}
+	b.mu.Unlock()
 }
 
 func (b *banList) prune() {
 	now := time.Now().Unix()
 	b.mu.Lock()
-	for a, until := range b.bans {
-		if until <= now {
+	for a, e := range b.bans {
+		if e.until <= now {
 			delete(b.bans, a)
 		}
 	}

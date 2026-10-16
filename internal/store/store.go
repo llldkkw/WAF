@@ -128,7 +128,7 @@ func Open(dataDir string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(4)
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema + certSchema + settingsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -171,6 +171,7 @@ func (s *Store) Prune(ctx context.Context, retention time.Duration) error {
 		{`DELETE FROM stats_minute WHERE ts < ?`, []any{cut}},
 		{`DELETE FROM audit WHERE ts < ?`, []any{time.Now().Add(-365 * 24 * time.Hour).Unix()}},
 		{`DELETE FROM sessions WHERE expires_at < ?`, []any{now}},
+		{`DELETE FROM action_uses WHERE used_at < ?`, []any{time.Now().Add(-30 * 24 * time.Hour).Unix()}},
 		{`DELETE FROM ip_rules WHERE expires_at > 0 AND expires_at < ?`, []any{now}},
 	}
 	for _, st := range stmts {

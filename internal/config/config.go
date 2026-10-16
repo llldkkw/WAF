@@ -6,8 +6,11 @@ package config
 import (
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
+	"time"
+	_ "time/tzdata" // timezones work in minimal containers too
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,6 +25,10 @@ type Config struct {
 	// GeoIPDB is an optional MaxMind GeoLite2-Country/City .mmdb file used for
 	// the attack map and country blocking.
 	GeoIPDB string `yaml:"geoip_db"`
+
+	// Timezone for scheduled reports (default Asia/Shanghai).
+	Timezone string `yaml:"timezone"`
+	loc      *time.Location
 
 	// LogRetentionDays controls how long attack events and stats are kept.
 	LogRetentionDays int `yaml:"log_retention_days"`
@@ -55,6 +62,9 @@ type AdminConfig struct {
 	SessionHours int `yaml:"session_hours"`
 	// IdleMinutes logs a session out after this much inactivity.
 	IdleMinutes int `yaml:"idle_minutes"`
+	// PublicURL is how operators reach the panel (e.g. https://10.8.0.1:9443).
+	// It enables one-click links in notifications.
+	PublicURL string `yaml:"public_url"`
 
 	allowed []netip.Prefix
 }
@@ -132,11 +142,28 @@ func (c *Config) validate() error {
 	if c.Admin.IdleMinutes <= 0 {
 		c.Admin.IdleMinutes = 30
 	}
+	if u := c.Admin.PublicURL; u != "" {
+		pu, err := url.Parse(u)
+		if err != nil || (pu.Scheme != "https" && pu.Scheme != "http") || pu.Host == "" {
+			return fmt.Errorf("admin.public_url must look like https://10.8.0.1:9443")
+		}
+	}
+	if c.Timezone == "" {
+		c.Timezone = "Asia/Shanghai"
+	}
+	loc, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		return fmt.Errorf("timezone: %w", err)
+	}
+	c.loc = loc
 	if c.LogRetentionDays <= 0 {
 		c.LogRetentionDays = 30
 	}
 	return nil
 }
+
+// Location is the configured timezone.
+func (c *Config) Location() *time.Location { return c.loc }
 
 func (p *ProxyConfig) Trusted() []netip.Prefix { return p.trusted }
 func (a *AdminConfig) Allowed() []netip.Prefix { return a.allowed }

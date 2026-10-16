@@ -47,9 +47,12 @@ type Site struct {
 	HTTPS      bool `json:"https"`
 	ForceHTTPS bool `json:"force_https"`
 
-	RateLimit      RateLimit       `json:"rate_limit"`
-	AttackBan      AttackBan       `json:"attack_ban"`
-	BlockCountries []string        `json:"block_countries"`
+	RateLimit RateLimit `json:"rate_limit"`
+	AttackBan AttackBan `json:"attack_ban"`
+	Geo       GeoPolicy `json:"geo"`
+	Challenge Challenge `json:"challenge"`
+	// BlockCountries is the pre-GeoPolicy format, migrated on Normalize.
+	BlockCountries []string        `json:"block_countries,omitempty"`
 	RuleExclusions []RuleExclusion `json:"rule_exclusions"`
 	PathRules      []PathRule      `json:"path_rules"`
 	HealthCheck    HealthCheck     `json:"health_check"`
@@ -63,6 +66,28 @@ type RateLimit struct {
 	// within one minute (0 disables auto-ban).
 	BanThreshold int `json:"ban_threshold"`
 	BanMinutes   int `json:"ban_minutes"`
+}
+
+// GeoPolicy blocks or exclusively allows visitors by location. Rules are
+// "CN" (country), "CN-GD" (province, ISO 3166-2) or "CN/深圳", "CN-GD/Shenzhen"
+// (city). Regions and cities need a GeoLite2-City database.
+type GeoPolicy struct {
+	Mode  string   `json:"mode"` // off, block, allow
+	Rules []string `json:"rules"`
+	// AllowUnknown lets through public IPs the database cannot place when
+	// mode is allow. Private/VPN addresses are always allowed.
+	AllowUnknown bool `json:"allow_unknown"`
+}
+
+// Challenge serves a JavaScript proof-of-work page before letting a visitor
+// through, which stops most bots and scripted floods.
+type Challenge struct {
+	Mode string `json:"mode"` // off, always, suspicious
+	// TTLHours is how long a solved challenge stays valid.
+	TTLHours int `json:"ttl_hours"`
+	// Difficulty in leading zero bits of the proof of work (12-22).
+	Difficulty  int      `json:"difficulty"`
+	ExemptPaths []string `json:"exempt_paths"`
 }
 
 // AttackBan bans IPs that trigger many WAF blocks in a short time (scanners).
@@ -100,6 +125,7 @@ var (
 	// Paths end up inside SecLang directives, so keep them strictly literal.
 	pathRe    = regexp.MustCompile(`^/[A-Za-z0-9._~\-/%]*$`)
 	countryRe = regexp.MustCompile(`^[A-Z]{2}$`)
+	regionRe  = regexp.MustCompile(`^[A-Z]{2}-[A-Z0-9]{1,3}$`)
 )
 
 // Normalize fills defaults and validates the site.
@@ -168,12 +194,15 @@ func (s *Site) Normalize() error {
 			ab.Minutes = 60
 		}
 	}
-	for i, c := range s.BlockCountries {
-		c = strings.ToUpper(strings.TrimSpace(c))
-		if !countryRe.MatchString(c) {
-			return fmt.Errorf("国家代码无效: %q (使用 ISO 两位代码，如 RU)", c)
-		}
-		s.BlockCountries[i] = c
+	if len(s.BlockCountries) > 0 && s.Geo.Mode == "" {
+		s.Geo = GeoPolicy{Mode: "block", Rules: s.BlockCountries}
+	}
+	s.BlockCountries = nil
+	if err := s.Geo.normalize(); err != nil {
+		return err
+	}
+	if err := s.Challenge.normalize(); err != nil {
+		return err
 	}
 	for _, ex := range s.RuleExclusions {
 		if ex.RuleID <= 0 {
@@ -215,9 +244,6 @@ func (s *Site) Normalize() error {
 		if hc.IntervalSec < 5 {
 			hc.IntervalSec = 10
 		}
-	}
-	if s.BlockCountries == nil {
-		s.BlockCountries = []string{}
 	}
 	if s.RuleExclusions == nil {
 		s.RuleExclusions = []RuleExclusion{}
@@ -268,6 +294,7 @@ func scanSite(sc interface{ Scan(...any) error }) (*Site, error) {
 		return nil, err
 	}
 	st.ID, st.Name, st.Enabled, st.CreatedAt, st.UpdatedAt = id, name, en, c, u
+	st.applyDefaults()
 	return &st, nil
 }
 
@@ -310,4 +337,97 @@ func (s *Store) DeleteSite(ctx context.Context, id int64) error {
 		return err
 	}
 	return s.BumpConfigVersion(ctx)
+}
+
+// applyDefaults upgrades sites stored by older versions so readers never see
+// missing fields.
+func (s *Site) applyDefaults() {
+	if s.Geo.Mode == "" {
+		s.Geo = GeoPolicy{Mode: "off"}
+		if len(s.BlockCountries) > 0 {
+			s.Geo = GeoPolicy{Mode: "block", Rules: s.BlockCountries}
+		}
+	}
+	s.BlockCountries = nil
+	if s.Geo.Rules == nil {
+		s.Geo.Rules = []string{}
+	}
+	if s.Challenge.Mode == "" {
+		s.Challenge = Challenge{Mode: "off", TTLHours: 24, Difficulty: 16}
+	}
+	if s.Challenge.ExemptPaths == nil {
+		s.Challenge.ExemptPaths = []string{}
+	}
+	if s.RuleExclusions == nil {
+		s.RuleExclusions = []RuleExclusion{}
+	}
+	if s.PathRules == nil {
+		s.PathRules = []PathRule{}
+	}
+}
+
+func (g *GeoPolicy) normalize() error {
+	switch g.Mode {
+	case "", "off":
+		g.Mode = "off"
+	case "block", "allow":
+	default:
+		return fmt.Errorf("地区策略无效: %q", g.Mode)
+	}
+	out := []string{}
+	for _, r := range g.Rules {
+		r = strings.TrimSpace(r)
+		if r == "" {
+			continue
+		}
+		area, city, hasCity := strings.Cut(r, "/")
+		area = strings.ToUpper(area)
+		if !countryRe.MatchString(area) && !regionRe.MatchString(area) {
+			return fmt.Errorf("地区规则无效: %q（示例：CN、CN-GD、CN/深圳）", r)
+		}
+		if hasCity {
+			city = strings.TrimSpace(city)
+			if city == "" || strings.ContainsAny(city, "/\n") {
+				return fmt.Errorf("城市名无效: %q", r)
+			}
+			area += "/" + city
+		}
+		out = append(out, area)
+	}
+	g.Rules = out
+	if g.Mode == "allow" && len(g.Rules) == 0 {
+		return errors.New("「仅允许」模式至少需要一个地区")
+	}
+	return nil
+}
+
+func (c *Challenge) normalize() error {
+	switch c.Mode {
+	case "", "off":
+		c.Mode = "off"
+	case "always", "suspicious":
+	default:
+		return fmt.Errorf("人机验证模式无效: %q", c.Mode)
+	}
+	if c.TTLHours <= 0 {
+		c.TTLHours = 24
+	}
+	if c.Difficulty == 0 {
+		c.Difficulty = 16
+	}
+	if c.Difficulty < 12 || c.Difficulty > 22 {
+		return errors.New("人机验证难度需在 12-22 之间")
+	}
+	out := []string{}
+	for _, p := range c.ExemptPaths {
+		if p = strings.TrimSpace(p); p == "" {
+			continue
+		}
+		if !pathRe.MatchString(p) {
+			return fmt.Errorf("免验证路径无效: %q", p)
+		}
+		out = append(out, p)
+	}
+	c.ExemptPaths = out
+	return nil
 }

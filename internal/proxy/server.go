@@ -4,21 +4,25 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/llldkkw/waf/internal/store"
 
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
 
-// Serve runs the HTTP and HTTPS listeners until ctx is cancelled.
+// Serve runs the HTTP and HTTPS listeners until ctx is cancelled. HTTPS
+// serves uploaded certificates first and falls back to Let's Encrypt.
 func (p *Proxy) Serve(ctx context.Context) error {
 	var handler http.Handler = p
 	httpHandler := handler
-	var tlsCfg *tls.Config
 
 	if p.cfg.ACME.Enabled {
 		m := &autocert.Manager{
@@ -30,14 +34,21 @@ func (p *Proxy) Serve(ctx context.Context) error {
 		if p.cfg.ACME.DirectoryURL != "" {
 			m.Client = &acme.Client{DirectoryURL: p.cfg.ACME.DirectoryURL}
 		}
+		p.acme = m
 		httpHandler = m.HTTPHandler(handler)
-		tlsCfg = m.TLSConfig()
-		tlsCfg.MinVersion = tls.VersionTLS12
+	}
+	tlsCfg := &tls.Config{
+		MinVersion:     tls.VersionTLS12,
+		NextProtos:     []string{"h2", "http/1.1"},
+		GetCertificate: p.getCertificate,
+	}
+	if p.acme != nil {
+		tlsCfg.NextProtos = append(tlsCfg.NextProtos, acme.ALPNProto)
 	}
 
 	errc := make(chan error, 2)
 	servers := []*http.Server{newServer(p.cfg.Proxy.HTTPListen, httpHandler, nil)}
-	if tlsCfg != nil && p.cfg.Proxy.HTTPSListen != "" {
+	if p.cfg.Proxy.HTTPSListen != "" {
 		servers = append(servers, newServer(p.cfg.Proxy.HTTPSListen, handler, tlsCfg))
 	}
 	for _, s := range servers {
@@ -65,6 +76,71 @@ func (p *Proxy) Serve(ctx context.Context) error {
 		_ = s.Shutdown(sctx)
 	}
 	return nil
+}
+
+func (p *Proxy) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	for _, proto := range hello.SupportedProtos {
+		if proto == acme.ALPNProto && p.acme != nil {
+			return p.acme.GetCertificate(hello)
+		}
+	}
+	name := strings.ToLower(strings.TrimSuffix(hello.ServerName, "."))
+	if c := p.tbl.Load().certs.lookup(name); c != nil {
+		return c, nil
+	}
+	if p.acme != nil && name != "" {
+		return p.acme.GetCertificate(hello)
+	}
+	return nil, fmt.Errorf("no certificate for %q", name)
+}
+
+// certIndex maps hostnames to uploaded certificates.
+type certIndex struct {
+	exact    map[string]*tls.Certificate
+	wildcard map[string]*tls.Certificate // "example.com" for "*.example.com"
+}
+
+func (ci *certIndex) lookup(name string) *tls.Certificate {
+	if ci == nil {
+		return nil
+	}
+	if c, ok := ci.exact[name]; ok {
+		return c
+	}
+	if i := strings.IndexByte(name, '.'); i > 0 {
+		return ci.wildcard[name[i+1:]]
+	}
+	return nil
+}
+
+func (p *Proxy) buildCerts(list []store.Certificate) *certIndex {
+	ci := &certIndex{exact: map[string]*tls.Certificate{}, wildcard: map[string]*tls.Certificate{}}
+	// Newer uploads win when domains overlap (list is ordered by id).
+	for _, c := range list {
+		key, err := p.box.Open(c.KeyEnc)
+		if err != nil {
+			slog.Error("proxy: cannot decrypt certificate key", "cert", c.Name, "err", err)
+			continue
+		}
+		pair, err := tls.X509KeyPair([]byte(c.CertPEM), key)
+		if err != nil {
+			slog.Error("proxy: invalid certificate", "cert", c.Name, "err", err)
+			continue
+		}
+		for _, d := range c.Domains {
+			if w, ok := strings.CutPrefix(d, "*."); ok {
+				ci.wildcard[w] = &pair
+			} else {
+				ci.exact[d] = &pair
+			}
+		}
+	}
+	return ci
+}
+
+// HasCertificate reports whether an uploaded certificate covers host.
+func (p *Proxy) HasCertificate(host string) bool {
+	return p.tbl.Load().certs.lookup(host) != nil
 }
 
 func newServer(addr string, h http.Handler, tlsCfg *tls.Config) *http.Server {

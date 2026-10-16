@@ -16,6 +16,8 @@ import Notifications from "./pages/Notifications";
 import Users from "./pages/Users";
 import Audit from "./pages/Audit";
 import Account from "./pages/Account";
+import Certs from "./pages/Certs";
+import ActionConfirm from "./pages/ActionConfirm";
 
 function App() {
   const { user, loading, isAdmin } = useAuth();
@@ -30,6 +32,8 @@ function App() {
           <Route path="sites" element={<Sites />} />
           <Route path="ip-rules" element={<IPRules />} />
           {isAdmin && <Route path="notifications" element={<Notifications />} />}
+          {isAdmin && <Route path="certs" element={<Certs />} />}
+          <Route path="actions" element={<ActionConfirm />} />
           {isAdmin && <Route path="users" element={<Users />} />}
           {isAdmin && <Route path="audit" element={<Audit />} />}
           <Route path="account" element={<Account />} />

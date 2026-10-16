@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 // Event actions.
@@ -182,22 +183,30 @@ type Overview struct {
 // Overview aggregates the dashboard data since `from`, bucketing the time
 // series by `bucket` seconds.
 func (s *Store) Overview(ctx context.Context, from, bucket int64, siteID int64) (*Overview, error) {
+	return s.OverviewRange(ctx, from, 0, bucket, siteID)
+}
+
+// OverviewRange is Overview over [from, to); to = 0 means now.
+func (s *Store) OverviewRange(ctx context.Context, from, to, bucket int64, siteID int64) (*Overview, error) {
+	if to == 0 {
+		to = time.Now().Unix() + 60
+	}
 	ov := &Overview{}
 	siteCond, siteArgs := "", []any{}
 	if siteID > 0 {
 		siteCond, siteArgs = " AND site_id = ?", []any{siteID}
 	}
-	args := append([]any{from}, siteArgs...)
+	args := append([]any{from, to}, siteArgs...)
 
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(requests),0), COALESCE(SUM(blocked),0) FROM stats_minute WHERE ts >= ?`+siteCond, args...).
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(requests),0), COALESCE(SUM(blocked),0) FROM stats_minute WHERE ts >= ? AND ts < ?`+siteCond, args...).
 		Scan(&ov.Requests, &ov.Blocked); err != nil {
 		return nil, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT client_ip) FROM events WHERE ts >= ?`+siteCond, args...).Scan(&ov.Attackers); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT client_ip) FROM events WHERE ts >= ? AND ts < ?`+siteCond, args...).Scan(&ov.Attackers); err != nil {
 		return nil, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT (ts / ?) * ? AS b, SUM(requests), SUM(blocked) FROM stats_minute WHERE ts >= ?`+siteCond+` GROUP BY b ORDER BY b`,
+	rows, err := s.db.QueryContext(ctx, `SELECT (ts / ?) * ? AS b, SUM(requests), SUM(blocked) FROM stats_minute WHERE ts >= ? AND ts < ?`+siteCond+` GROUP BY b ORDER BY b`,
 		append([]any{bucket, bucket}, args...)...)
 	if err != nil {
 		return nil, err
@@ -214,7 +223,7 @@ func (s *Store) Overview(ctx context.Context, from, bucket int64, siteID int64) 
 	rows.Close()
 
 	top := func(expr string, extra string, n int) ([]Count, error) {
-		rows, err := s.db.QueryContext(ctx, `SELECT `+expr+` AS k, COUNT(*) AS c FROM events WHERE ts >= ?`+siteCond+extra+` GROUP BY k ORDER BY c DESC LIMIT ?`,
+		rows, err := s.db.QueryContext(ctx, `SELECT `+expr+` AS k, COUNT(*) AS c FROM events WHERE ts >= ? AND ts < ?`+siteCond+extra+` GROUP BY k ORDER BY c DESC LIMIT ?`,
 			append(args, n)...)
 		if err != nil {
 			return nil, err
@@ -249,4 +258,11 @@ func (s *Store) Overview(ctx context.Context, from, bucket int64, siteID int64) 
 		return nil, err
 	}
 	return ov, nil
+}
+
+// CountAutoBans counts automatic bans created in [from, to).
+func (s *Store) CountAutoBans(ctx context.Context, from, to int64) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ip_rules WHERE source = 'auto-ban' AND created_at >= ? AND created_at < ?`, from, to).Scan(&n)
+	return n, err
 }

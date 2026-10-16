@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { BellRing, Pencil, Plus, Send, Trash2 } from "lucide-react";
-import { api, type Channel, type ChannelType, type Level } from "../lib/api";
+import { api, type Channel, type ChannelType, type Level, type ReportSettings } from "../lib/api";
 import { useLoad } from "../lib/hooks";
-import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Switch, useAction, useToast } from "../components/ui";
+import { Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Spinner, Switch, Textarea, useAction, useToast } from "../components/ui";
 
 const levelLabels: Record<Level, string> = { info: "全部（含通知）", warning: "警告及以上", critical: "仅严重" };
 
 const events: { level: Level; items: string[] }[] = [
-  { level: "critical", items: ["后端服务宕机", "管理后台新 IP 登录", "高危攻击（命令执行 / Java / PHP / RFI）", "配置加载失败"] },
-  { level: "warning", items: ["攻击量突增", "IP 被自动封禁", "高危等级攻击被拦截", "后台登录多次失败"] },
+  { level: "critical", items: ["后端服务宕机", "管理后台新 IP 登录", "高危攻击（命令执行 / Java / PHP / RFI）", "配置加载失败", "证书已过期"] },
+  { level: "warning", items: ["攻击量突增", "IP 被自动封禁", "高危等级攻击被拦截", "后台登录多次失败", "证书 14 天内到期"] },
   { level: "info", items: ["配置变更", "后端恢复", "网关启动", "其他攻击拦截"] },
 ];
 
@@ -62,6 +62,7 @@ export default function Notifications() {
                     <div className="text-xs text-muted mt-0.5">
                       {typeLabel(c.type)} · {levelLabels[c.min_level]}
                       {c.config.quiet_hours && ` · 免打扰 ${c.config.quiet_hours}`}
+                      {c.config.reports === "1" && " · 接收安全报告"}
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -86,10 +87,11 @@ export default function Notifications() {
                 </ul>
               </div>
             ))}
-            <p className="text-xs text-muted border-t border-border pt-3">严重级别的消息会无视免打扰时段。</p>
+            <p className="text-xs text-muted border-t border-border pt-3">严重级别的消息会无视免打扰时段。攻击和封禁告警附带「一键封禁 / 解封 / 加白」链接（需在配置中设置 admin.public_url）。</p>
           </div>
         </Card>
       </div>
+      <ReportSettingsCard />
       {editing && types.data && (
         <ChannelEditor
           value={editing}
@@ -131,14 +133,20 @@ function ChannelEditor({ value, types, onClose, onSaved }: { value: Partial<Chan
         <div className="grid sm:grid-cols-2 gap-4">
           {t?.fields.map((f) => (
             <Field key={f.key} label={<>{f.label}{f.required && <span className="text-danger"> *</span>}</>}>
-              <Input
-                type={f.secret ? "password" : "text"}
-                autoComplete="off"
-                value={c.config?.[f.key] ?? ""}
-                placeholder={f.placeholder}
-                onChange={(e) => setCfg(f.key, e.target.value)}
-                className={f.secret ? "font-mono" : undefined}
-              />
+              {f.options ? (
+                <Select value={c.config?.[f.key] ?? ""} onChange={(e) => setCfg(f.key, e.target.value)}>
+                  {f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </Select>
+              ) : (
+                <Input
+                  type={f.secret ? "password" : "text"}
+                  autoComplete="off"
+                  value={c.config?.[f.key] ?? ""}
+                  placeholder={f.placeholder}
+                  onChange={(e) => setCfg(f.key, e.target.value)}
+                  className={f.secret ? "font-mono" : undefined}
+                />
+              )}
             </Field>
           ))}
         </div>
@@ -152,9 +160,67 @@ function ChannelEditor({ value, types, onClose, onSaved }: { value: Partial<Chan
             <Input value={c.config?.quiet_hours ?? ""} onChange={(e) => setCfg("quiet_hours", e.target.value)} placeholder="23:00-07:00" />
           </Field>
         </div>
+        <Switch
+          checked={c.config?.reports === "1"}
+          onChange={(v) => setCfg("reports", v ? "1" : "")}
+          label="接收每日 / 每周安全报告"
+          desc="报告不受推送级别和免打扰时段限制，按设定时间发送"
+        />
         <Switch checked={!!c.enabled} onChange={(v) => setC({ ...c, enabled: v })} label="启用" />
         <p className="text-xs text-muted">密钥类字段加密存储，保存后不会再显示明文。编辑时保持「••••••」表示不修改。</p>
       </div>
     </Modal>
+  );
+}
+
+const weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+function ReportSettingsCard() {
+  const { data, reload } = useLoad(() => api.reportSettings());
+  const [s, setS] = useState<ReportSettings | null>(null);
+  const [preview, setPreview] = useState("");
+  const { run, busy } = useAction();
+  const cur = s ?? data?.settings ?? null;
+  if (!cur) return null;
+  const up = (p: Partial<ReportSettings>) => setS({ ...cur, ...p });
+
+  const save = async () => {
+    if (await run(() => api.saveReportSettings(cur), "已保存")) {
+      setS(null);
+      reload();
+    }
+  };
+  const sendNow = async (period: "daily" | "weekly") => {
+    const r = await run(() => api.sendReport(period), "报告已发送到订阅的渠道");
+    if (r) setPreview(r.preview);
+  };
+
+  return (
+    <Card title="安全报告" className="mt-4">
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className="space-y-4">
+          <p className="text-[13px] text-muted">定时汇总请求量、拦截数、攻击类型、Top 攻击 IP / 地区 / 路径，并与上一期对比。只发送到开启了「接收安全报告」的渠道。时区：{data?.timezone}</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Switch checked={cur.daily} onChange={(v) => up({ daily: v })} label="每日报告" />
+            <Input type="time" value={cur.daily_time} disabled={!cur.daily} onChange={(e) => up({ daily_time: e.target.value })} className="w-32" />
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Switch checked={cur.weekly} onChange={(v) => up({ weekly: v })} label="每周报告" />
+            <Select value={cur.weekly_day} disabled={!cur.weekly} onChange={(e) => up({ weekly_day: Number(e.target.value) })} className="w-24">
+              {weekdays.map((d, i) => <option key={i} value={i + 1}>{d}</option>)}
+            </Select>
+            <Input type="time" value={cur.weekly_time} disabled={!cur.weekly} onChange={(e) => up({ weekly_time: e.target.value })} className="w-32" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" loading={busy} disabled={!s} onClick={save}>保存设置</Button>
+            <Button loading={busy} onClick={() => sendNow("daily")}>立即发送近 24 小时报告</Button>
+            <Button loading={busy} onClick={() => sendNow("weekly")}>立即发送近 7 天报告</Button>
+          </div>
+        </div>
+        <Field label="最近一次报告预览">
+          <Textarea readOnly rows={12} value={preview || "点击「立即发送」后在这里预览内容"} className="font-sans text-[13px]" />
+        </Field>
+      </div>
+    </Card>
   );
 }

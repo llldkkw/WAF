@@ -43,6 +43,8 @@ func actionLabel(a string) string {
 		"site_create": "新建站点", "site_update": "修改站点", "site_delete": "删除站点", "rule_exclusion": "添加误报排除",
 		"ip_add": "添加 IP 规则", "ip_delete": "删除 IP 规则",
 		"channel_save": "保存通知渠道", "channel_delete": "删除通知渠道",
+		"cert_upload": "上传证书", "cert_replace": "更新证书", "cert_delete": "删除证书",
+		"action_link": "执行一键操作", "report_settings": "修改报告设置",
 		"user_create": "新建用户", "user_update": "修改用户", "user_delete": "删除用户", "user_reset": "重置用户凭据",
 	}[a]; ok {
 		return l
@@ -79,16 +81,48 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	writeJSON(w, map[string]any{
-		"version":    s.version,
-		"uptime":     int64(time.Since(s.started).Seconds()),
-		"goroutines": runtime.NumGoroutine(),
-		"memory_mb":  m.Alloc >> 20,
-		"proxy":      s.px.Status(),
-		"acme":       s.cfg.ACME.Enabled,
+		"version":     s.version,
+		"uptime":      int64(time.Since(s.started).Seconds()),
+		"goroutines":  runtime.NumGoroutine(),
+		"memory_mb":   m.Alloc >> 20,
+		"proxy":       s.px.Status(),
+		"acme":        s.cfg.ACME.Enabled,
+		"geo":         map[string]bool{"enabled": s.geo.Enabled(), "city": s.geo.HasCity()},
+		"public_url":  s.cfg.Admin.PublicURL,
+		"timezone":    s.cfg.Timezone,
+		"tls_missing": s.tlsMissing(r),
 	})
 }
 
 // --- sites ---
+
+// tlsMissing lists HTTPS hostnames that have neither an uploaded certificate
+// nor Let's Encrypt to fall back on.
+func (s *Server) tlsMissing(r *http.Request) []string {
+	out := []string{}
+	if s.cfg.ACME.Enabled {
+		return out
+	}
+	sites, err := s.st.ListSites(r.Context())
+	if err != nil {
+		return out
+	}
+	for _, st := range sites {
+		if !st.Enabled || !st.HTTPS {
+			continue
+		}
+		for _, h := range st.Hosts {
+			probe := h
+			if w, ok := strings.CutPrefix(h, "*."); ok {
+				probe = "x." + w
+			}
+			if !s.px.HasCertificate(probe) {
+				out = append(out, h)
+			}
+		}
+	}
+	return out
+}
 
 func (s *Server) handleListSites(w http.ResponseWriter, r *http.Request) {
 	sites, err := s.st.ListSites(r.Context())

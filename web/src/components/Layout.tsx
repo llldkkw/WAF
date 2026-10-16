@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   Bell,
   FileClock,
+  FileKey2,
   Globe2,
   LayoutDashboard,
   LogOut,
@@ -26,6 +27,7 @@ const nav: { to: string; label: string; icon: ReactNode; admin?: boolean }[] = [
   { to: "/events", label: "攻击日志", icon: <ScrollText /> },
   { to: "/sites", label: "站点防护", icon: <Globe2 /> },
   { to: "/ip-rules", label: "IP 黑白名单", icon: <ShieldBan /> },
+  { to: "/certs", label: "证书管理", icon: <FileKey2 />, admin: true },
   { to: "/notifications", label: "推送通知", icon: <Bell />, admin: true },
   { to: "/users", label: "用户管理", icon: <Users />, admin: true },
   { to: "/audit", label: "操作审计", icon: <FileClock />, admin: true },

@@ -77,6 +77,20 @@ func (s *strikes) hit(site int64, ip netip.Addr, window time.Duration) int {
 	return len(ts)
 }
 
+// count returns offences within the window without recording one.
+func (s *strikes) count(site int64, ip netip.Addr, window time.Duration) int {
+	cut := time.Now().Add(-window).Unix()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, t := range s.m[limiterKey{site, ip}] {
+		if t >= cut {
+			n++
+		}
+	}
+	return n
+}
+
 func (s *strikes) reset(site int64, ip netip.Addr) {
 	s.mu.Lock()
 	delete(s.m, limiterKey{site, ip})

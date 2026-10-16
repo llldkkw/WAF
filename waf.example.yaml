@@ -29,15 +29,23 @@ admin:
     - 127.0.0.1/32
   session_hours: 12   # 会话最长有效期
   idle_minutes: 30    # 无操作自动登出
+  # 面板访问地址。设置后，告警推送会附带「一键封禁 / 解封 / 加白」链接
+  # （链接需在 VPN 内打开，登录并确认后才会执行）
+  public_url: "https://10.8.0.1:9443"
 
 # 自动 HTTPS（Let's Encrypt）。开启前确保域名已解析到本机且 80 端口可从公网访问。
 acme:
   enabled: false
   email: you@example.com
 
-# 可选：MaxMind GeoLite2-Country.mmdb，用于攻击地图和地区封禁
+# 可选：MaxMind GeoIP 数据库，用于攻击地图和地区策略
 # 免费注册下载：https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
-# geoip_db: /var/lib/waf/GeoLite2-Country.mmdb
+#   GeoLite2-Country.mmdb  只能按国家匹配
+#   GeoLite2-City.mmdb     还能按省份 / 城市匹配（推荐）
+# geoip_db: /var/lib/waf/GeoLite2-City.mmdb
+
+# 安全报告和免打扰时段使用的时区
+timezone: Asia/Shanghai
 
 # 攻击日志保留天数
 log_retention_days: 30

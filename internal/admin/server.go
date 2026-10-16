@@ -30,6 +30,7 @@ import (
 	"github.com/llldkkw/waf/internal/events"
 	"github.com/llldkkw/waf/internal/notify"
 	"github.com/llldkkw/waf/internal/proxy"
+	"github.com/llldkkw/waf/internal/report"
 	"github.com/llldkkw/waf/internal/secure"
 	"github.com/llldkkw/waf/internal/store"
 )
@@ -47,6 +48,8 @@ type Server struct {
 	version  string
 	throttle *throttle
 	totpUsed totpGuard
+	rep      *report.Reporter
+	geo      *events.Geo
 }
 
 type Deps struct {
@@ -58,12 +61,15 @@ type Deps struct {
 	Proxy    *proxy.Proxy
 	Web      fs.FS
 	Version  string
+	Reporter *report.Reporter
+	Geo      *events.Geo
 }
 
 func New(d Deps) *Server {
 	return &Server{
 		cfg: d.Config, st: d.Store, box: d.Box, nt: d.Notifier, hub: d.Hub, px: d.Proxy, web: d.Web,
 		tls: d.Config.Admin.TLS != "off", started: time.Now(), version: d.Version, throttle: newThrottle(),
+		rep: d.Reporter, geo: d.Geo,
 	}
 }
 
@@ -106,6 +112,18 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/users/{id}", admin(s.handleUpdateUser))
 	mux.HandleFunc("DELETE /api/users/{id}", admin(s.handleDeleteUser))
 	mux.HandleFunc("POST /api/users/{id}/reset", admin(s.handleResetUser))
+
+	mux.HandleFunc("GET /api/certs", admin(s.handleListCerts))
+	mux.HandleFunc("POST /api/certs", admin(s.handleSaveCert))
+	mux.HandleFunc("PUT /api/certs/{id}", admin(s.handleSaveCert))
+	mux.HandleFunc("DELETE /api/certs/{id}", admin(s.handleDeleteCert))
+
+	mux.HandleFunc("GET /api/actions", admin(s.handleInspectAction))
+	mux.HandleFunc("POST /api/actions", admin(s.handleExecuteAction))
+
+	mux.HandleFunc("GET /api/settings/reports", admin(s.handleGetReportSettings))
+	mux.HandleFunc("PUT /api/settings/reports", admin(s.handleSaveReportSettings))
+	mux.HandleFunc("POST /api/reports/send", admin(s.handleSendReport))
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, errors.New("not found"))

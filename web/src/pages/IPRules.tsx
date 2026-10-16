@@ -6,7 +6,7 @@ import { useLoad, useSites } from "../lib/hooks";
 import { fmtRelative, fmtTime } from "../lib/format";
 import { Badge, Button, Card, Field, Input, Modal, PageHeader, Segmented, Select, Spinner, Table, Td, useAction, useToast } from "../components/ui";
 
-const sourceLabels: Record<string, string> = { manual: "手动", "auto-ban": "自动封禁", cli: "命令行" };
+const sourceLabels: Record<string, string> = { manual: "手动", "auto-ban": "自动封禁", cli: "命令行", link: "通知链接" };
 
 export default function IPRules() {
   const { isAdmin } = useAuth();

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/llldkkw/waf/internal/actions"
 	"github.com/llldkkw/waf/internal/notify"
 	"github.com/llldkkw/waf/internal/store"
 )
@@ -29,7 +30,11 @@ type Recorder struct {
 	dropped atomic.Int64
 
 	baseline float64 // EWMA of blocked requests per minute
+	links    *actions.Signer
 }
+
+// SetLinks enables one-click action links in attack alerts.
+func (r *Recorder) SetLinks(s *actions.Signer) { r.links = s }
 
 func NewRecorder(st *store.Store, hub *Hub, nt *notify.Notifier, geo *Geo) *Recorder {
 	return &Recorder{st: st, hub: hub, nt: nt, geo: geo, in: make(chan *store.Event, 4096), minute: map[int64][2]int64{}}
@@ -159,8 +164,8 @@ func (r *Recorder) alert(e *store.Event) {
 		lv = notify.Warning
 	}
 	where := ""
-	if e.Country != "" {
-		where = " (" + e.Country + ")"
+	if loc := r.geo.Lookup(e.ClientIP).String(); loc != "" {
+		where = " (" + loc + ")"
 	}
 	verb := "已拦截"
 	if e.Action == store.ActDetected {
@@ -171,6 +176,7 @@ func (r *Recorder) alert(e *store.Event) {
 		Title: fmt.Sprintf("%s %s 攻击", verb, categoryLabel(e.Category)),
 		Body: fmt.Sprintf("来源: %s%s\n站点: %s\n请求: %s %s\n规则: %d %s",
 			e.ClientIP, where, e.Host, e.Method, truncate(e.URI, 200), e.RuleID, e.Message),
+		Actions: r.links.ForAttacker(e.ClientIP),
 	})
 }
 

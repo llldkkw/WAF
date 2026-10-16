@@ -75,6 +75,15 @@ type Message struct {
 	Key   string
 	Title string
 	Body  string
+	// Actions are links rendered as buttons where the channel supports it
+	// (one-click ban / allow, opened in the admin panel).
+	Actions []Action
+}
+
+type Action struct {
+	Label  string `json:"label"`
+	URL    string `json:"url"`
+	Danger bool   `json:"danger,omitempty"`
 }
 
 type channel struct {
@@ -99,6 +108,26 @@ type Notifier struct {
 	pending  map[string]*agg
 
 	queue chan Message
+	loc   *time.Location
+}
+
+// KindReport marks scheduled security reports.
+const KindReport = "report"
+
+// SetLocation sets the timezone used for quiet hours.
+func (n *Notifier) SetLocation(loc *time.Location) { n.loc = loc }
+
+func (n *Notifier) location() *time.Location {
+	if n.loc == nil {
+		return time.Local
+	}
+	return n.loc
+}
+
+// Send delivers a message synchronously to one channel config (used for
+// tests and previews).
+func (n *Notifier) Send(ctx context.Context, typ string, cfg map[string]string, m Message) error {
+	return send(ctx, typ, cfg, m)
 }
 
 func New(st *store.Store, box *secure.Box) *Notifier {
@@ -255,14 +284,21 @@ func (n *Notifier) dispatch(ctx context.Context, m Message) {
 	n.mu.Lock()
 	chs := append([]channel(nil), n.channels...)
 	n.mu.Unlock()
-	now := time.Now()
+	now := time.Now().In(n.location())
 	mod := now.Hour()*60 + now.Minute()
 	for _, c := range chs {
-		if m.Level < c.level {
-			continue
-		}
-		if m.Level < Critical && inQuiet(c.quiet, mod) {
-			continue
+		if m.Kind == KindReport {
+			// Reports go only to channels subscribed to them, at any level.
+			if c.Config["reports"] != "1" {
+				continue
+			}
+		} else {
+			if m.Level < c.level {
+				continue
+			}
+			if m.Level < Critical && inQuiet(c.quiet, mod) {
+				continue
+			}
 		}
 		go func(c channel) {
 			cctx, cancel := context.WithTimeout(ctx, 20*time.Second)

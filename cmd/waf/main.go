@@ -20,11 +20,13 @@ import (
 	"github.com/mdp/qrterminal/v3"
 	"golang.org/x/term"
 
+	"github.com/llldkkw/waf/internal/actions"
 	"github.com/llldkkw/waf/internal/admin"
 	"github.com/llldkkw/waf/internal/config"
 	"github.com/llldkkw/waf/internal/events"
 	"github.com/llldkkw/waf/internal/notify"
 	"github.com/llldkkw/waf/internal/proxy"
+	"github.com/llldkkw/waf/internal/report"
 	"github.com/llldkkw/waf/internal/secure"
 	"github.com/llldkkw/waf/internal/store"
 	"github.com/llldkkw/waf/web"
@@ -132,12 +134,18 @@ func cmdServe(args []string) error {
 	}
 	hub := events.NewHub()
 	rec := events.NewRecorder(st, hub, nt, geo)
-	px := proxy.New(cfg, st, rec, nt)
-	adm := admin.New(admin.Deps{Config: cfg, Store: st, Box: box, Notifier: nt, Hub: hub, Proxy: px, Web: web.FS(), Version: version})
+	px := proxy.New(cfg, st, rec, nt, box)
+	links := actions.NewSigner(box, cfg.Admin.PublicURL)
+	rec.SetLinks(links)
+	px.SetLinks(links)
+	nt.SetLocation(cfg.Location())
+	rep := report.New(st, nt, geo, cfg.Location())
+	adm := admin.New(admin.Deps{Config: cfg, Store: st, Box: box, Notifier: nt, Hub: hub, Proxy: px, Web: web.FS(), Version: version, Reporter: rep, Geo: geo})
 
 	go nt.Run(ctx)
 	go rec.Run(ctx)
 	go px.Watch(ctx)
+	go rep.Run(ctx)
 
 	errc := make(chan error, 2)
 	go func() { errc <- px.Serve(ctx) }()

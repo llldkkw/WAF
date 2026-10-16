@@ -79,6 +79,16 @@ export default function Dashboard() {
         }
       />
 
+      {!!status?.tls_missing?.length && (
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
+          <ShieldAlert className="size-4 text-warn mt-0.5 shrink-0" />
+          <div>
+            <span className="font-medium text-warn">以下 HTTPS 域名没有可用证书：</span>
+            {status.tls_missing.join("、")}。请在「证书管理」上传证书，或在配置中启用 acme。
+          </div>
+        </div>
+      )}
+
       {unhealthy.length > 0 && (
         <div className="mb-4 flex items-start gap-3 rounded-xl border border-danger/40 bg-danger-soft px-4 py-3 text-sm">
           <ShieldAlert className="size-4 text-danger mt-0.5 shrink-0" />

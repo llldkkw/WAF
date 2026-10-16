@@ -10,16 +10,20 @@ import (
 	"net/http"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/corazawaf/coraza/v3"
+	"golang.org/x/crypto/acme/autocert"
 
+	"github.com/llldkkw/waf/internal/actions"
 	"github.com/llldkkw/waf/internal/config"
 	"github.com/llldkkw/waf/internal/engine"
 	"github.com/llldkkw/waf/internal/events"
 	"github.com/llldkkw/waf/internal/notify"
+	"github.com/llldkkw/waf/internal/secure"
 	"github.com/llldkkw/waf/internal/store"
 )
 
@@ -34,7 +38,6 @@ type siteRuntime struct {
 	waf       coraza.WAF
 	pool      *pool
 	pathRules []pathRule
-	countries map[string]bool
 }
 
 type table struct {
@@ -44,6 +47,7 @@ type table struct {
 	version  int64
 	httpsSet map[string]bool
 	wildTLS  map[string]bool
+	certs    *certIndex
 }
 
 func (t *table) lookup(host string) *siteRuntime {
@@ -75,11 +79,16 @@ type Proxy struct {
 	rlHits  *strikes
 	atkHits *strikes
 	hc      *healthChecker
+	box     *secure.Box
+	acme    *autocert.Manager
+	links   *actions.Signer
+
+	lastCertCheck time.Time
 }
 
-func New(cfg *config.Config, st *store.Store, rec *events.Recorder, nt *notify.Notifier) *Proxy {
+func New(cfg *config.Config, st *store.Store, rec *events.Recorder, nt *notify.Notifier, box *secure.Box) *Proxy {
 	p := &Proxy{
-		cfg: cfg, st: st, rec: rec, nt: nt,
+		cfg: cfg, st: st, rec: rec, nt: nt, box: box,
 		wafs:    engine.NewCache(cfg.Proxy.MaxBodyBytes),
 		bans:    newBanList(),
 		lims:    newLimiters(),
@@ -106,10 +115,15 @@ func (p *Proxy) Reload(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	certs, err := p.st.ListCerts(ctx)
+	if err != nil {
+		return err
+	}
 	t := &table{
 		exact: map[string]*siteRuntime{}, wildcard: map[string]*siteRuntime{},
 		ips: buildIPList(rules), version: ver,
 		httpsSet: map[string]bool{}, wildTLS: map[string]bool{},
+		certs: p.buildCerts(certs),
 	}
 	var targets []hcTarget
 	var active []store.Site
@@ -127,10 +141,7 @@ func (p *Proxy) Reload(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("site %q: %w", s.Name, err)
 		}
-		rt := &siteRuntime{site: s, waf: w, pool: pl, countries: map[string]bool{}}
-		for _, c := range s.BlockCountries {
-			rt.countries[c] = true
-		}
+		rt := &siteRuntime{site: s, waf: w, pool: pl}
 		for _, pr := range s.PathRules {
 			r := pathRule{prefix: pr.Path, deny: pr.Action == "deny"}
 			for _, c := range pr.CIDRs {
@@ -161,6 +172,7 @@ func (p *Proxy) Reload(ctx context.Context) error {
 		}
 	}
 	p.tbl.Store(t)
+	p.bans.settle()
 	p.wafs.Retain(active)
 	p.hc.restart(ctx, targets)
 	slog.Info("proxy: config loaded", "version", ver, "sites", len(active), "ip_rules", len(rules))
@@ -191,10 +203,38 @@ func (p *Proxy) Watch(ctx context.Context) {
 			}
 		case <-gc.C:
 			p.lims.prune(10 * time.Minute)
-			p.rlHits.prune(time.Minute)
-			p.atkHits.prune(5 * time.Minute)
+			p.rlHits.prune(10 * time.Minute)
+			p.atkHits.prune(10 * time.Minute)
 			p.bans.prune()
+			if time.Since(p.lastCertCheck) > 24*time.Hour {
+				p.lastCertCheck = time.Now()
+				p.checkCertExpiry(ctx)
+			}
 		}
+	}
+}
+
+// checkCertExpiry warns about uploaded certificates expiring within 14 days.
+// Let's Encrypt certificates renew themselves.
+func (p *Proxy) checkCertExpiry(ctx context.Context) {
+	certs, err := p.st.ListCerts(ctx)
+	if err != nil {
+		return
+	}
+	for _, c := range certs {
+		left := time.Until(time.Unix(c.NotAfter, 0))
+		if left > 14*24*time.Hour {
+			continue
+		}
+		lv, title := notify.Warning, "证书即将过期: "+c.Name
+		if left <= 0 {
+			lv, title = notify.Critical, "证书已过期: "+c.Name
+		}
+		p.nt.Notify(notify.Message{
+			Level: lv, Kind: "cert", Key: "cert:" + strconv.FormatInt(c.ID, 10), Title: title,
+			Body: fmt.Sprintf("域名: %s\n到期时间: %s（剩余 %d 天）\n请在控制台「证书管理」上传新证书。",
+				strings.Join(c.Domains, ", "), time.Unix(c.NotAfter, 0).Format("2006-01-02"), int(left.Hours()/24)),
+		})
 	}
 }
 
@@ -305,14 +345,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Country blocking.
-	if len(rt.countries) > 0 {
-		if c := p.rec.Geo().Country(ip); c != "" && rt.countries[c] {
-			e := ev(store.ActGeoDenied, http.StatusForbidden)
-			e.Country, e.Message = c, "地区封禁: "+c
-			block(e, "访问被拒绝", "您所在的地区无法访问此站点。")
-			return
+	// 2. Geo policy.
+	if denied, loc := p.geoDenied(&s.Geo, addr); denied {
+		e := ev(store.ActGeoDenied, http.StatusForbidden)
+		e.Country = loc.Country
+		if s.Geo.Mode == "allow" {
+			e.Message = "不在允许的地区: " + orUnknown(loc.String())
+		} else {
+			e.Message = "地区封禁: " + loc.String()
 		}
+		block(e, "访问被拒绝", "您所在的地区无法访问此站点。")
+		return
 	}
 
 	// 3. Path ACLs.
@@ -328,6 +371,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Challenge answers are posted to a reserved path on every site.
+	if r.URL.Path == challengePath && s.Challenge.Mode != "off" {
+		p.rec.Count(s.ID, false)
+		p.handleChallengeSubmit(w, r, s, addr)
+		return
+	}
+
 	// 4. Rate limiting with optional auto-ban.
 	if rl := s.RateLimit; rl.Enabled && !p.lims.allow(s.ID, addr, rl.RPS, rl.Burst) {
 		e := ev(store.ActRateLimited, http.StatusTooManyRequests)
@@ -341,7 +391,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. WAF engine.
+	// 5. Human verification (JS challenge).
+	if p.needsChallenge(s, addr, r) {
+		p.rec.Count(s.ID, false)
+		p.serveChallenge(w, r, s, addr)
+		return
+	}
+
+	// 6. WAF engine.
 	if rt.waf != nil {
 		v, done, err := engine.Inspect(rt.waf, s.Mode == store.ModeDetect, r, ip, port)
 		defer done()
@@ -375,6 +432,44 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rt.pool.pick().proxy.ServeHTTP(w, r)
 }
 
+// SetLinks enables one-click action links in ban alerts.
+func (p *Proxy) SetLinks(s *actions.Signer) { p.links = s }
+
+// geoDenied applies a site's geo policy. Private and loopback addresses
+// (VPN, LAN, health checks) are never geo-blocked.
+func (p *Proxy) geoDenied(g *store.GeoPolicy, addr netip.Addr) (bool, events.Location) {
+	if g.Mode == "off" || g.Mode == "" || !p.rec.Geo().Enabled() || !isPublic(addr) {
+		return false, events.Location{}
+	}
+	loc := p.rec.Geo().Lookup(addr.String())
+	matched := false
+	for _, r := range g.Rules {
+		if loc.Matches(r) {
+			matched = true
+			break
+		}
+	}
+	if g.Mode == "block" {
+		return matched, loc
+	}
+	if loc.Country == "" {
+		return !g.AllowUnknown, loc
+	}
+	return !matched, loc
+}
+
+func isPublic(a netip.Addr) bool {
+	return !(a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsUnspecified() ||
+		netip.MustParsePrefix("100.64.0.0/10").Contains(a))
+}
+
+func orUnknown(s string) string {
+	if s == "" {
+		return "未知"
+	}
+	return s
+}
+
 func (p *Proxy) ban(addr netip.Addr, s *store.Site, minutes int, reason string) {
 	until := time.Now().Add(time.Duration(minutes) * time.Minute)
 	p.bans.add(addr, until.Unix())
@@ -387,14 +482,15 @@ func (p *Proxy) ban(addr netip.Addr, s *store.Site, minutes int, reason string) 
 			slog.Error("proxy: persist ban failed", "err", err)
 		}
 	}()
-	country := p.rec.Geo().Country(addr.String())
+	country := p.rec.Geo().Lookup(addr.String()).String()
 	if country != "" {
 		country = " (" + country + ")"
 	}
 	p.nt.Notify(notify.Message{
 		Level: notify.Warning, Kind: "ban", Key: "ban:" + addr.String(),
-		Title: "IP 已自动封禁: " + addr.String(),
-		Body:  fmt.Sprintf("IP: %s%s\n站点: %s\n原因: %s\n封禁时长: %d 分钟（至 %s）", addr, country, s.Name, reason, minutes, until.Format("01-02 15:04")),
+		Title:   "IP 已自动封禁: " + addr.String(),
+		Body:    fmt.Sprintf("IP: %s%s\n站点: %s\n原因: %s\n封禁时长: %d 分钟（至 %s）", addr, country, s.Name, reason, minutes, until.Format("01-02 15:04")),
+		Actions: p.links.ForBanned(addr.String()),
 	})
 }
 

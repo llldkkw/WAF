@@ -46,6 +46,48 @@ export interface HealthCheck {
 
 export type Mode = "block" | "detect" | "off";
 
+export interface GeoPolicy {
+  mode: "off" | "block" | "allow";
+  rules: string[];
+  allow_unknown: boolean;
+}
+
+export interface Challenge {
+  mode: "off" | "always" | "suspicious";
+  ttl_hours: number;
+  difficulty: number;
+  exempt_paths: string[];
+}
+
+export interface Cert {
+  id: number;
+  name: string;
+  domains: string[];
+  issuer: string;
+  not_before: number;
+  not_after: number;
+  created_at: number;
+}
+
+export interface ActionInfo {
+  action: "ban" | "allow" | "unban";
+  ip: string;
+  minutes: number;
+  reason: string;
+  expires_at: number;
+  used: boolean;
+  description: string;
+  location: string;
+}
+
+export interface ReportSettings {
+  daily: boolean;
+  daily_time: string;
+  weekly: boolean;
+  weekly_day: number;
+  weekly_time: string;
+}
+
 export interface Site {
   id: number;
   name: string;
@@ -63,7 +105,8 @@ export interface Site {
   force_https: boolean;
   rate_limit: RateLimit;
   attack_ban: AttackBan;
-  block_countries: string[];
+  geo: GeoPolicy;
+  challenge: Challenge;
   rule_exclusions: RuleExclusion[];
   path_rules: PathRule[];
   health_check: HealthCheck;
@@ -134,6 +177,10 @@ export interface Status {
   goroutines: number;
   memory_mb: number;
   acme: boolean;
+  geo: { enabled: boolean; city: boolean };
+  public_url: string;
+  timezone: string;
+  tls_missing: string[];
   proxy: {
     sites: number;
     version: number;
@@ -157,6 +204,7 @@ export interface ChannelField {
   placeholder?: string;
   secret: boolean;
   required: boolean;
+  options?: { value: string; label: string }[];
 }
 
 export interface ChannelType {
@@ -274,6 +322,20 @@ export const api = {
     c.id ? request("PUT", `/api/channels/${c.id}`, { body: c }) : request("POST", "/api/channels", { body: c }),
   deleteChannel: (id: number) => request("DELETE", `/api/channels/${id}`),
   testChannel: (id: number) => request("POST", `/api/channels/${id}/test`),
+
+  certs: () => request<{ certs: Cert[] }>("GET", "/api/certs"),
+  saveCert: (c: { id?: number; name: string; cert: string; key: string }) =>
+    c.id
+      ? request<{ cert: Cert }>("PUT", `/api/certs/${c.id}`, { body: { name: c.name, cert: c.cert, key: c.key } })
+      : request<{ cert: Cert }>("POST", "/api/certs", { body: { name: c.name, cert: c.cert, key: c.key } }),
+  deleteCert: (id: number) => request("DELETE", `/api/certs/${id}`),
+
+  inspectAction: (t: string) => request<ActionInfo>("GET", `/api/actions?t=${encodeURIComponent(t)}`),
+  executeAction: (token: string) => request<{ ok: boolean; description: string }>("POST", "/api/actions", { body: { token } }),
+
+  reportSettings: () => request<{ settings: ReportSettings; timezone: string }>("GET", "/api/settings/reports"),
+  saveReportSettings: (s: ReportSettings) => request("PUT", "/api/settings/reports", { body: s }),
+  sendReport: (period: "daily" | "weekly") => request<{ ok: boolean; preview: string }>("POST", "/api/reports/send", { body: { period } }),
 
   users: () => request<{ users: User[] }>("GET", "/api/users"),
   createUser: (u: { username: string; password: string; role: Role }) =>

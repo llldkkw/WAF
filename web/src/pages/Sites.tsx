@@ -1,9 +1,10 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowRight, Globe2, Lock, Pencil, Plus, Trash2 } from "lucide-react";
-import { api, type Mode, type PathRule, type Site } from "../lib/api";
+import { api, type Challenge, type GeoPolicy, type Mode, type PathRule, type Site, type Status } from "../lib/api";
+import { cnProvinces, geoRuleLabel, needsCityDB } from "../lib/regions";
 import { useAuth } from "../lib/auth";
 import { useLoad } from "../lib/hooks";
-import { countryName, flag, modeLabels } from "../lib/format";
+import { modeLabels } from "../lib/format";
 import {
   Badge,
   Button,
@@ -38,7 +39,8 @@ const blank = (): Site => ({
   force_https: false,
   rate_limit: { enabled: true, rps: 20, burst: 40, ban_threshold: 60, ban_minutes: 30 },
   attack_ban: { enabled: true, threshold: 20, minutes: 60 },
-  block_countries: [],
+  geo: { mode: "off", rules: [], allow_unknown: false },
+  challenge: { mode: "off", ttl_hours: 24, difficulty: 16, exempt_paths: [] },
   rule_exclusions: [],
   path_rules: [],
   health_check: { enabled: true, path: "/", interval_sec: 10 },
@@ -100,7 +102,9 @@ export default function Sites() {
                 {s.mode !== "off" && <Badge tone="accent">CRS PL{s.paranoia_level}</Badge>}
                 {s.rate_limit.enabled && <Badge>限流 {s.rate_limit.rps}/s</Badge>}
                 {s.attack_ban.enabled && <Badge>自动封禁</Badge>}
-                {s.block_countries.length > 0 && <Badge>封禁 {s.block_countries.length} 个地区</Badge>}
+                {s.geo.mode === "block" && <Badge>封禁 {s.geo.rules.length} 个地区</Badge>}
+                {s.geo.mode === "allow" && <Badge tone="info">仅允许 {s.geo.rules.length} 个地区</Badge>}
+                {s.challenge.mode !== "off" && <Badge tone="info">人机验证</Badge>}
                 {s.path_rules.length > 0 && <Badge>路径规则 {s.path_rules.length}</Badge>}
                 {s.rule_exclusions.length > 0 && <Badge tone="warn">排除 {s.rule_exclusions.length}</Badge>}
                 {s.health_check.enabled && <Badge>健康检查</Badge>}
@@ -209,7 +213,12 @@ function SiteEditor({ site, readOnly, onClose, onSaved }: { site: Site; readOnly
         </Section>
 
         <Section title="HTTPS">
-          <Switch checked={s.https} onChange={(v) => up({ https: v, force_https: v && s.force_https })} label="自动申请 HTTPS 证书" desc="使用 Let's Encrypt 自动签发和续期（需在配置文件中启用 acme）" />
+          <Switch
+            checked={s.https}
+            onChange={(v) => up({ https: v, force_https: v && s.force_https })}
+            label="启用 HTTPS"
+            desc="优先使用「证书管理」中上传的证书（含泛域名证书）；没有匹配的证书时，用 Let's Encrypt 自动签发（需在配置文件中启用 acme）"
+          />
           <Switch checked={s.force_https} disabled={!s.https} onChange={(v) => up({ force_https: v })} label="强制跳转 HTTPS" />
         </Section>
 
@@ -288,21 +297,45 @@ function SiteEditor({ site, readOnly, onClose, onSaved }: { site: Site; readOnly
           )}
         </Section>
 
-        <Section title="访问控制">
-          <Field label="封禁地区" hint="ISO 两位国家代码，逗号分隔，如 RU, KP。需要配置 GeoIP 数据库。">
-            <Input
-              value={s.block_countries.join(", ")}
-              onChange={(e) => up({ block_countries: e.target.value.split(/[,\s]+/).map((c) => c.trim().toUpperCase()).filter(Boolean) })}
-              placeholder="RU, KP"
+        <Section title="人机验证（JS 挑战）" desc="访问者的浏览器需要先完成一次计算（通常不到 1 秒）才能进入，可挡住绝大多数爬虫、扫描器和脚本化 CC 攻击。注意：搜索引擎爬虫和 API 客户端也会被拦下，API 路径请加入免验证。">
+          <Field label="验证模式">
+            <Segmented<Challenge["mode"]>
+              value={s.challenge.mode}
+              onChange={(v) => up({ challenge: { ...s.challenge, mode: v } })}
+              options={[
+                { value: "off", label: "关闭" },
+                { value: "suspicious", label: "仅可疑访问" },
+                { value: "always", label: "所有访问" },
+              ]}
             />
-            {s.block_countries.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-2">
-                {s.block_countries.map((c) => (
-                  <Badge key={c}>{flag(c)} {countryName(c)}</Badge>
-                ))}
-              </div>
-            )}
           </Field>
+          <p className="text-xs text-muted -mt-2">
+            「仅可疑访问」：最近触发过限流或拦截的 IP，以及不像浏览器的请求（无 User-Agent / 语言头）才需要验证。遭受 CC 攻击时可临时切换到「所有访问」。
+          </p>
+          {s.challenge.mode !== "off" && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="难度">
+                  <Select value={s.challenge.difficulty} onChange={(e) => up({ challenge: { ...s.challenge, difficulty: Number(e.target.value) } })}>
+                    <option value={14}>低（手机约 0.1 秒）</option>
+                    <option value={16}>标准（推荐）</option>
+                    <option value={18}>高（约 0.5–1 秒）</option>
+                    <option value={20}>很高（数秒，仅遭受攻击时使用）</option>
+                  </Select>
+                </Field>
+                <Field label="验证有效期（小时）">
+                  <Input type="number" min={1} value={s.challenge.ttl_hours} onChange={(e) => up({ challenge: { ...s.challenge, ttl_hours: Number(e.target.value) } })} />
+                </Field>
+              </div>
+              <Field label="免验证路径（每行一个前缀）" hint="API、Webhook、健康检查等非浏览器访问的路径">
+                <LinesInput value={s.challenge.exempt_paths} onChange={(v) => up({ challenge: { ...s.challenge, exempt_paths: v } })} placeholder={"/api/\n/webhook/"} />
+              </Field>
+            </>
+          )}
+        </Section>
+
+        <Section title="访问控制">
+          <GeoEditor value={s.geo} onChange={(geo) => up({ geo })} />
           <Field label="路径访问规则" hint="例如：/admin 只允许 VPN 网段 10.8.0.0/24 访问">
             <div className="space-y-2">
               {s.path_rules.map((r, i) => (
@@ -332,5 +365,66 @@ function SiteEditor({ site, readOnly, onClose, onSaved }: { site: Site; readOnly
         </Section>
       </fieldset>
     </Drawer>
+  );
+}
+
+function GeoEditor({ value: g, onChange }: { value: GeoPolicy; onChange: (g: GeoPolicy) => void }) {
+  const [status, setStatus] = useState<Status | null>(null);
+  const [prov, setProv] = useState("");
+  useEffect(() => {
+    api.status().then(setStatus).catch(() => {});
+  }, []);
+  const add = (r: string) => !g.rules.includes(r) && onChange({ ...g, rules: [...g.rules, r] });
+  const geo = status?.geo;
+
+  return (
+    <Field label="地区访问策略">
+      <div className="space-y-3">
+        <Segmented<GeoPolicy["mode"]>
+          value={g.mode}
+          onChange={(mode) => onChange({ ...g, mode })}
+          options={[
+            { value: "off", label: "不限制" },
+            { value: "block", label: "封禁以下地区" },
+            { value: "allow", label: "仅允许以下地区" },
+          ]}
+        />
+        {geo && !geo.enabled && g.mode !== "off" && (
+          <p className="text-xs text-warn bg-warn-soft rounded-lg px-3 py-2">尚未配置 GeoIP 数据库，地区策略不会生效。请在配置文件中设置 geoip_db。</p>
+        )}
+        {geo?.enabled && !geo.city && needsCityDB(g.rules) && (
+          <p className="text-xs text-warn bg-warn-soft rounded-lg px-3 py-2">按省份或城市匹配需要 GeoLite2-City 数据库，当前是国家库，省市规则不会生效。</p>
+        )}
+        {g.mode !== "off" && (
+          <>
+            <LinesInput value={g.rules} onChange={(rules) => onChange({ ...g, rules })} placeholder={"CN\nCN-GD\nCN/深圳"} rows={4} />
+            <p className="text-xs text-muted">
+              每行一条：国家 <code className="font-mono">CN</code>、省份 <code className="font-mono">CN-GD</code>、城市{" "}
+              <code className="font-mono">CN/深圳</code> 或 <code className="font-mono">CN-GD/Shenzhen</code>。内网和 VPN 地址始终放行。
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={() => add("CN")}>+ 中国大陆</Button>
+              <Button size="sm" onClick={() => add("HK")}>+ 香港</Button>
+              <Select value={prov} onChange={(e) => { if (e.target.value) add(`CN-${e.target.value}`); setProv(""); }} className="w-40 h-8">
+                <option value="">+ 添加省份…</option>
+                {Object.entries(cnProvinces).map(([code, name]) => (
+                  <option key={code} value={code}>{name}</option>
+                ))}
+              </Select>
+            </div>
+            {g.rules.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {g.rules.map((r) => (
+                  <Badge key={r} tone={g.mode === "allow" ? "ok" : "danger"}>{geoRuleLabel(r)}</Badge>
+                ))}
+              </div>
+            )}
+            {g.mode === "allow" && (
+              <Switch checked={g.allow_unknown} onChange={(v) => onChange({ ...g, allow_unknown: v })} label="放行无法识别地区的 IP" desc="关闭时，数据库查不到位置的公网 IP 会被拒绝" />
+            )}
+          </>
+        )}
+      </div>
+    </Field>
   );
 }

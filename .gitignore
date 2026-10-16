@@ -5,3 +5,4 @@ waf.yaml
 *.db
 *.db-*
 master.key
+dev.yaml

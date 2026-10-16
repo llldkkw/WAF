@@ -224,6 +224,21 @@ make test
 | `web/` | React + TypeScript + Tailwind + ECharts 控制台 |
 | `deploy/` | systemd、nftables、安装脚本、Docker Compose |
 
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [架构说明](docs/architecture.md) | 模块划分、请求处理流程、热加载、**安全设计** |
+| [配置参考](docs/configuration.md) | `waf.yaml` 全部配置项、站点设置、命令行 |
+| [管理 API](docs/api.md) | REST 接口、WebSocket、Webhook 格式 |
+| [常见问题](docs/faq.md) | 误报、被锁在外面、地区策略、邮件、证书等 |
+
+## 参与贡献
+
+欢迎提交 Issue 和 Pull Request，请先阅读 [贡献指南](CONTRIBUTING.md) 和 [行为准则](CODE_OF_CONDUCT.md)。
+
+发现安全漏洞请**不要**公开提交，按 [安全策略](SECURITY.md) 私密报告。
+
 ## 路线图
 
 - [x] 告警消息中的一键封禁 / 加白链接
